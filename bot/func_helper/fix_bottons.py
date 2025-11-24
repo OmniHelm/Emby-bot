@@ -6,7 +6,10 @@ from bot import chanel, main_group, bot_name, extra_emby_libs, tz_id, tz_ad, tz_
     schedall, auto_update, fuxx_pitao, moviepilot, red_envelope, config, LOGGER
 from bot.func_helper import nezha_res
 from bot.func_helper.emby import emby
-from bot.func_helper.utils import members_info
+from bot.func_helper.utils import members_info, _async_ttl_cache
+
+# 导入 Emoji 规范
+from bot.constants.emojis import ButtonEmojis as BE
 
 cache = Cache()
 
@@ -15,23 +18,37 @@ cache = Cache()
 
 def judge_start_ikb(is_admin: bool, account: bool) -> InlineKeyboardMarkup:
     """
-    start面板按钮
+    start面板按钮（优化：使用标准化 Emoji）
     """
     if not account:
+        # 未创建账户的按钮
         d = []
-        d.append(['🎟️ 使用注册码', 'exchange'])
-        d.append(['👑 创建账户', 'create'])
-        d.append(['⭕ 换绑TG', 'changetg'])
-        d.append(['🔍 绑定TG', 'bindtg'])
-        # 如果邀请等级为d （未注册用户也能使用），则显示兑换商店
+        d.append([f'{BE.CODE_MANAGE} 使用注册码', 'exchange'])
+        d.append([f'{BE.CREATE_ACCOUNT} 创建账户', 'create'])
+        d.append(['🔄 换绑TG', 'changetg'])
+        d.append(['🔗 绑定TG', 'bindtg'])
+        # 如果邀请等级为d（未注册用户也能使用），则显示兑换商店
         if _open.invite_lv == 'd':
-            d.append(['🏪 兑换商店', 'storeall'])
+            d.append([f'{BE.STORE} 兑换商店', 'storeall'])
     else:
-        d = [['️👥 用户功能', 'members'], ['🌐 服务器', 'server']]
-        if schedall.check_ex: d.append(['🎟️ 使用续期码', 'exchange'])
-    if _open.checkin: d.append([f'🎯 签到', 'checkin'])
+        # 已有账户的按钮
+        d = [
+            [f'{BE.MY_INFO} 用户功能', 'members'],
+            ['🌐 服务器', 'server']
+        ]
+        if schedall.check_ex:
+            d.append([f'{BE.CODE_MANAGE} 使用续期码', 'exchange'])
+
+    # 签到功能
+    if _open.checkin:
+        d.append(['🎯 签到', 'checkin'])
+
     lines = array_chunk(d, 2)
-    if is_admin: lines.append([['👮🏻‍♂️ admin', 'manage']])
+
+    # 管理员按钮
+    if is_admin:
+        lines.append([[f'{BE.SETTINGS} 管理员', 'manage']])
+
     keyword = ikb(lines)
     return keyword
 
@@ -48,34 +65,53 @@ judge_group_ikb = ikb([[('🌟 频道入口 ', f't.me/{chanel}', 'url'),
 
 def members_ikb(is_admin: bool = False, account: bool = False) -> InlineKeyboardMarkup:
     """
-    判断用户面板
+    用户面板按钮（优化：使用标准化 Emoji，改进布局）
     """
     if account:
-        normal = [[('🏪 兑换商店', 'storeall'), ('🗑️ 删除账号', 'delme')],
-                    [('🎬 显示/隐藏', 'embyblock'), ('⭕ 重置密码', 'reset')],
-                    [('💖 我的收藏', 'my_favorites'),('💠 我的设备', 'my_devices')],
-                    ]
+        # 已有账户的用户面板 - 优化布局和顺序
+        normal = [
+            # 第一行：查看功能
+            [(f'{BE.MY_FAVORITES} 我的收藏', 'my_favorites'),
+             (f'{BE.MY_DEVICES} 我的设备', 'my_devices')],
+
+            # 第二行：账户操作
+            [(f'{BE.RESET_PASSWORD} 重置密码', 'reset'),
+             (f'{BE.SHOW_HIDE} 显示/隐藏', 'embyblock')],
+
+            # 第三行：商店和删除
+            [(f'{BE.STORE} 兑换商店', 'storeall'),
+             (f'{BE.DELETE_ACCOUNT} 删除账号', 'delme')],
+        ]
+
+        # 点播中心（如果启用）
         if moviepilot.status:
             normal.append([('🍿 点播中心', 'download_center')])
-        normal.append([('♻️ 主界面', 'back_start')])
+
+        # 返回主页按钮
+        normal.append([(f'{BE.BACK} 返回主页', 'back_start')])
+
         return ikb(normal)
     else:
+        # 未创建账户则显示 start 面板
         return judge_start_ikb(is_admin, account)
         # return ikb(
         #     [[('👑 创建账户', 'create')], [('⭕ 换绑TG', 'changetg'), ('🔍 绑定TG', 'bindtg')],
         #      [('♻️ 主界面', 'back_start')]])
 
 
-back_start_ikb = ikb([[('💫 回到首页', 'back_start')]])
-back_members_ikb = ikb([[('💨 返回', 'members')]])
-back_manage_ikb = ikb([[('💨 返回', 'manage')]])
-re_create_ikb = ikb([[('🍥 重新输入', 'create'), ('💫 用户主页', 'members')]])
-re_changetg_ikb = ikb([[('✨ 换绑TG', 'changetg'), ('💫 用户主页', 'members')]])
-re_bindtg_ikb = ikb([[('✨ 绑定TG', 'bindtg'), ('💫 用户主页', 'members')]])
-re_delme_ikb = ikb([[('♻️ 重试', 'delme')], [('🔙 返回', 'members')]])
-re_reset_ikb = ikb([[('♻️ 重试', 'reset')], [('🔙 返回', 'members')]])
-re_exchange_b_ikb = ikb([[('♻️ 重试', 'exchange'), ('❌ 关闭', 'closeit')]])
-re_born_ikb = ikb([[('✨ 重输', 'store-reborn'), ('💫 返回', 'storeall')]])
+# 优化：统一返回按钮的 Emoji 和文本
+back_start_ikb = ikb([[(f'{BE.BACK} 返回首页', 'back_start')]])
+back_members_ikb = ikb([[(f'{BE.BACK} 返回', 'members')]])
+back_manage_ikb = ikb([[(f'{BE.BACK} 返回', 'manage')]])
+
+# 优化：重试/重新操作按钮
+re_create_ikb = ikb([[(f'{BE.REFRESH} 重新输入', 'create'), (f'{BE.BACK} 用户主页', 'members')]])
+re_changetg_ikb = ikb([[('🔄 换绑TG', 'changetg'), (f'{BE.BACK} 用户主页', 'members')]])
+re_bindtg_ikb = ikb([[('🔗 绑定TG', 'bindtg'), (f'{BE.BACK} 用户主页', 'members')]])
+re_delme_ikb = ikb([[(f'{BE.REFRESH} 重试', 'delme')], [(f'{BE.BACK} 返回', 'members')]])
+re_reset_ikb = ikb([[(f'{BE.REFRESH} 重试', 'reset')], [(f'{BE.BACK} 返回', 'members')]])
+re_exchange_b_ikb = ikb([[(f'{BE.REFRESH} 重试', 'exchange'), (f'{BE.CANCEL} 关闭', 'closeit')]])
+re_born_ikb = ikb([[(f'{BE.REFRESH} 重输', 'store-reborn'), (f'{BE.BACK} 返回', 'storeall')]])
 
 
 def send_changetg_ikb(cr_id, rp_id):
@@ -111,22 +147,24 @@ user_emby_unblock_ikb = ikb([[('❎ 已显示', 'members')]])
 """server ↓"""
 
 
-@cache.memoize(ttl=120)
 async def cr_page_server():
     """
     翻页服务器面板
     :return:
     """
-    sever = nezha_res.sever_info(tz_ad, tz_api, tz_id)
-    if not sever:
-        return ikb([[('🔙 - 用户', 'members'), ('❌ - 上一级', 'back_start')]]), None
-    d = []
-    for i in sever:
-        d.append([i['name'], f'server:{i["id"]}'])
-    lines = array_chunk(d, 3)
-    lines.append([['🔙 - 用户', 'members'], ['❌ - 上一级', 'back_start']])
-    # keyboard是键盘，a是sever
-    return ikb(lines), sever
+    async def _fetch():
+        sever = await nezha_res.sever_info(tz_ad, tz_api, tz_id)
+        if not sever:
+            return ikb([[('🔙 - 用户', 'members'), ('❌ - 上一级', 'back_start')]]), None
+        d = []
+        for i in sever:
+            d.append([i['name'], f'server:{i["id"]}'])
+        lines = array_chunk(d, 3)
+        lines.append([['🔙 - 用户', 'members'], ['❌ - 上一级', 'back_start']])
+        # keyboard是键盘，a是sever
+        return ikb(lines), sever
+
+    return await _async_ttl_cache("cr_page_server", 120, _fetch)
 
 
 """admins ↓"""
