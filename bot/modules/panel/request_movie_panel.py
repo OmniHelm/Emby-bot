@@ -1,5 +1,5 @@
 from pyrogram import filters, enums
-from bot import bot, moviepilot, bot_photo, LOGGER, sakura_b
+from bot import bot, moviepilot, bot_photo, LOGGER, credits
 from bot.func_helper.msg_utils import callAnswer, editMessage, sendMessage, sendPhoto, callListen
 from bot.func_helper.filters import user_in_group_on_filter
 from bot.func_helper.fix_bottons import re_download_center_ikb, back_members_ikb, continue_search_ikb, request_record_page_ikb,mp_search_page_ikb
@@ -40,8 +40,8 @@ async def download_media(_, call):
 
     await asyncio.gather(callAnswer(call, f'🔍 请输入你想求的资源名称'))
     await editMessage(call,
-                      f"当前点播费用为: 1GB 消耗 {moviepilot.price} {sakura_b}\n"
-                      f"您当前拥有 {emby_user.iv} {sakura_b}\n"
+                      f"当前点播费用为: 1GB 消耗 {moviepilot.price} {credits}\n"
+                      f"您当前拥有 {emby_user.iv} {credits}\n"
                       f"请在120s内对我发送你想点播的资源名称，\n退出点 /cancel")
 
     txt = await callListen(call, 120, buttons=re_download_center_ikb)
@@ -207,7 +207,7 @@ async def handle_resource_selection(call, result):
                 size = result[index-1]['size'] / (1024 * 1024 * 1024)
                 need_cost = math.ceil(size) * moviepilot.price
                 if need_cost > emby_user.iv:
-                    await editMessage(msg, f"❌ 您的{sakura_b}不足，此资源需要 {need_cost}{sakura_b}\n请选择其他资源编号", buttons=re_download_center_ikb)
+                    await editMessage(msg, f"❌ 您的{credits}不足，此资源需要 {need_cost}{credits}\n请选择其他资源编号", buttons=re_download_center_ikb)
                     continue
                 torrent_info = result[index-1]['torrent_info']
                 # 兼容mp v2的api，加入了torrent_in
@@ -215,7 +215,7 @@ async def handle_resource_selection(call, result):
                 success, download_id = await add_download_task(param)
                 user_search_data.pop(call.from_user.id, None)
                 if success:
-                    log = f"【下载任务】：#{call.from_user.id} [{call.from_user.first_name}](tg://user?id={call.from_user.id}) 已成功添加到下载队列，此次消耗 {need_cost}{sakura_b}\n下载ID：{download_id}"
+                    log = f"【下载任务】：#{call.from_user.id} [{call.from_user.first_name}](tg://user?id={call.from_user.id}) 已成功添加到下载队列，此次消耗 {need_cost}{credits}\n下载ID：{download_id}"
                     download_log = f"{log}\n详情：{result[index-1]['tg_log']}"
                     LOGGER.info(log)
                     sql_update_emby(Emby.tg == call.from_user.id,
@@ -227,7 +227,7 @@ async def handle_resource_selection(call, result):
                             await sendMessage(call, download_log, send=True, chat_id=moviepilot.download_log_chatid)
                         except Exception as e:
                             LOGGER.error(f"[MoviePilot] 发送下载日志通知到{moviepilot.download_log_chatid}失败: {str(e)}")
-                    await editMessage(msg, f"🎉 已成功添加到下载队列，此次消耗 {need_cost}{sakura_b}\n🔖下载ID：`{download_id}`", buttons=re_download_center_ikb, parse_mode=enums.ParseMode.MARKDOWN)
+                    await editMessage(msg, f"🎉 已成功添加到下载队列，此次消耗 {need_cost}{credits}\n🔖下载ID：`{download_id}`", buttons=re_download_center_ikb, parse_mode=enums.ParseMode.MARKDOWN)
                     return
                 else:
                     LOGGER.error(f"【下载任务】：{call.from_user.id} 添加下载任务失败!")

@@ -2,7 +2,7 @@ import math
 import cn2an
 from datetime import datetime, timezone, timedelta
 
-from bot import bot, bot_photo, group, sakura_b, LOGGER, ranks, _open 
+from bot import bot, bot_photo, group, credits, LOGGER, ranks, _open 
 from bot.func_helper.emby import emby
 from bot.func_helper.utils import convert_to_beijing_time, convert_s, get_users, tem_deluser, _async_ttl_cache
 from bot.sql_helper import Session
@@ -93,9 +93,9 @@ class Uplaysinfo:
         send = await bot.send_photo(chat_id=group[0], photo=bot_photo, caption=a[0], reply_markup=play_button)
         if uplays and _open.uplays:
             if sql_update_embys(some_list=ls, method='iv'):
-                text = f'**自动将观看时长转换为{sakura_b}**\n\n'
+                text = f'**自动将观看时长转换为{credits}**\n\n'
                 for i in ls:
-                    text += f'[{i[2]}](tg://user?id={i[0]}) 获得了 {i[3]} {sakura_b}奖励\n'
+                    text += f'[{i[2]}](tg://user?id={i[0]}) 获得了 {i[3]} {credits}奖励\n'
                 n = 4096
                 chunks = [text[i:i + n] for i in range(0, len(text), n)]
                 for c in chunks:
@@ -103,7 +103,7 @@ class Uplaysinfo:
                                            text=c + f'\n⏱️ 当前时间 - {datetime.now().strftime("%Y-%m-%d")}')
                 LOGGER.info(f'【userplayrank】： ->成功 数据库执行批量操作{ls}')
             else:
-                await send.reply(f'**🎂！！！为用户增加{sakura_b}出错啦** @工程师看看吧~ ')
+                await send.reply(f'**🎂！！！为用户增加{credits}出错啦** @工程师看看吧~ ')
                 LOGGER.error(f'【userplayrank】：-？失败 数据库执行批量操作{ls}')
 
     @staticmethod

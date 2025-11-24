@@ -15,7 +15,7 @@ from bot.func_helper.filters import user_in_group_filter, user_in_group_on_filte
 from bot.func_helper.msg_utils import deleteMessage, sendMessage, sendPhoto, callAnswer, editMessage
 from bot.func_helper.fix_bottons import group_f, judge_start_ikb, judge_group_ikb, cr_kk_ikb
 from bot.modules.extra import user_cha_ip
-from bot import bot, prefixes, group, bot_photo, ranks, sakura_b
+from bot import bot, prefixes, group, bot_photo, ranks, credits
 
 # 导入优化模块
 from bot.constants.messages import Messages
@@ -113,7 +113,7 @@ async def p_start(_, msg):
 • 📊 **账户状态**
   {status_text}
 
-• 🍒 **持有{sakura_b}**
+• 🍒 **持有{credits}**
   {us}
 
 **系统状态：**

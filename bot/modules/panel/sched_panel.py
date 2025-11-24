@@ -5,7 +5,7 @@ import aiohttp
 from pyrogram import filters
 from pyrogram.types import Message
 
-from bot import bot, sakura_b, schedall, save_config, prefixes, _open, owner, LOGGER, auto_update, group
+from bot import bot, credits, schedall, save_config, prefixes, _open, owner, LOGGER, auto_update, group
 from bot.func_helper.filters import admins_on_filter, user_in_group_on_filter
 from bot.func_helper.fix_bottons import sched_buttons, plays_list_button
 from bot.func_helper.msg_utils import callAnswer, editMessage, deleteMessage
@@ -98,10 +98,10 @@ async def check_ex_admin(_, msg):
     except IndexError:
         confirm = False
     if confirm == 'true':
-        send = await msg.reply("🍥 正在运行 【到期检测】。。。")
-        await asyncio.gather(check_expired(), send.edit("✅ 【到期检测结束】"))
+        send = await msg.reply("[ExpireCheck] 正在运行到期检测...")
+        await asyncio.gather(check_expired(), send.edit("[ExpireCheck] 到期检测完成"))
     else:
-        await msg.reply("🔔 请输入 `/check_ex true` 确认运行")
+        await msg.reply("⚠️ 请输入 `/check_ex true` 确认运行")
 
 
 # bot数据库手动备份
@@ -129,10 +129,10 @@ async def run_low_ac(_, msg):
     except IndexError:
         confirm = False
     if confirm == 'true':
-        send = await msg.reply("⭕ 不活跃检测运行ing···")
+        send = await msg.reply("[ActivityCheck] 正在检测不活跃用户...")
         await asyncio.gather(check_low_activity(), send.delete())
     else:
-        await msg.reply("🔔 请输入 `/low_activity true` 确认运行")
+        await msg.reply("⚠️ 请输入 `/low_activity true` 确认运行")
 
 @bot.on_message(filters.command('uranks', prefixes) & admins_on_filter)
 async def shou_dong_uplayrank(_, msg):
@@ -142,7 +142,7 @@ async def shou_dong_uplayrank(_, msg):
         await user_plays_rank(days=days, uplays=False)
     except (IndexError, ValueError):
         await msg.reply(
-            f"🔔 请输入 `/uranks 天数`，此运行手动不会影响{sakura_b}的结算（仅定时运行时结算），放心使用。\n"
+            f"🔔 请输入 `/uranks 天数`，此运行手动不会影响{credits}的结算（仅定时运行时结算），放心使用。\n"
             f"定时结算状态: {_open.uplays}")
 @bot.on_message(filters.command('sync_favorites', prefixes) & admins_on_filter)
 async def sync_favorites_admin(_, msg):
@@ -227,7 +227,7 @@ async def update_bot(force: bool = False, msg: Message = None, manual: bool = Fa
                     await execute("git pull --all")
                     # await execute(f"{executable} -m pip install --upgrade -r requirements.txt")
                     await execute(f"{executable} -m pip install  -r requirements.txt")
-                    text = '【AutoUpdate_Bot】运行成功，已更新bot代码。重启bot中...'
+                    text = '[AutoUpdate] Bot 代码已更新，正在重启...'
                     if not msg:
                         reply = await bot.send_message(chat_id=group[0], text=text)
                         schedall.restart_chat_id = group[0]
@@ -240,11 +240,11 @@ async def update_bot(force: bool = False, msg: Message = None, manual: bool = Fa
                     save_config()
                     os.execl(executable, executable, *argv)
                 else:
-                    message = "【AutoUpdate_Bot】运行成功，未检测到更新，结束"
+                    message = "[AutoUpdate] 未检测到更新"
                     await bot.send_message(chat_id=group[0], text=message) if not msg else await msg.edit(message)
                     LOGGER.info(message)
             else:
-                text = '【AutoUpdate_Bot】失败，请检查 git_repo 是否正确，形如 `OmniHelm/Emby-bot`'
+                text = '[AutoUpdate] 失败，请检查 git_repo 配置是否正确（格式：OmniHelm/Emby-bot）'
                 await bot.send_message(chat_id=group[0], text=text) if not msg else await msg.edit(text)
                 LOGGER.info(text)
 

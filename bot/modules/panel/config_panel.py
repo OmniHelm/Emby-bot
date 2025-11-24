@@ -4,7 +4,7 @@
 部分目前有 导出日志，更改探针，更改emby线路，设置购买按钮
 
 """
-from bot import bot, prefixes, bot_photo, Now, LOGGER, config, save_config, _open, auto_update, moviepilot, sakura_b
+from bot import bot, prefixes, bot_photo, Now, LOGGER, config, save_config, _open, auto_update, moviepilot, credits
 from pyrogram import filters
 
 from bot.func_helper.filters import admins_on_filter
@@ -226,7 +226,7 @@ async def mp_config_panel(_, call):
     await editMessage(call, 
                      "⚙️ MoviePilot 设置面板\n\n"
                      f"当前状态：{'已开启' if moviepilot.status else '已关闭'}\n"
-                     f"点播价格：{moviepilot.price} {sakura_b}/GB\n"
+                     f"点播价格：{moviepilot.price} {credits}/GB\n"
                      f"用户权限：{lv_text}可使用\n"
                      f"日志频道：{moviepilot.download_log_chatid or '未设置'}",
                      buttons=mp_config_ikb())
@@ -255,7 +255,7 @@ async def set_mp_price(_, call):
     await callAnswer(call, '💰 设置点播价格')
     await editMessage(call,
                      f"💰 设置点播价格\n\n"
-                     f"当前价格：{moviepilot.price} {sakura_b}/GB\n"
+                     f"当前价格：{moviepilot.price} {credits}/GB\n"
                      f"请输入新的价格数值\n"
                      f"取消请点 /cancel")
     
@@ -269,7 +269,7 @@ async def set_mp_price(_, call):
             raise ValueError
         moviepilot.price = price
         save_config()
-        await editMessage(call, f"✅ 点播价格已设置为 {price} {sakura_b}/GB")
+        await editMessage(call, f"✅ 点播价格已设置为 {price} {credits}/GB")
         await mp_config_panel(_, call)
     except ValueError:
         await editMessage(call, "❌ 请输入有效的数字")

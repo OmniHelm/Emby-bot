@@ -11,7 +11,7 @@
   "chanel": "su_yxfy",
   "bot_photo": "https://telegra.ph/file/3b6cd2a89b652e72e0d3b.png",
   "admins": [],
-  "money": "花币",
+  "credits_name": "积分",
   "emby_api": "xxxxx",
   "emby_url": "http://255.255.255.255:8096",
   "emby_line": "susuyyds.com",
@@ -63,7 +63,7 @@
   "tz_api": "",
   "tz_id": [],
   "ranks": {
-    "logo": "SAKURA",
+    "logo": "EmbyBot",
     "backdrop": false
   },
   "schedall": {

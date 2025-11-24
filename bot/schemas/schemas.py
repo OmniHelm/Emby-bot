@@ -65,7 +65,7 @@ class Open(BaseModel):
 
 
 class Ranks(BaseModel):
-    logo: str = "SAKURA"
+    logo: str = "EmbyBot"
     backdrop: bool = False
 
 
@@ -145,7 +145,7 @@ class Config(BaseModel):
     bot_photo: str
     open: Open
     admins: Optional[List[int]] = []
-    money: str
+    credits_name: str
     emby_api: str
     emby_url: str
     emby_block: Optional[List[str]] = []

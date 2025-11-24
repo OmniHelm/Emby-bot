@@ -2,7 +2,7 @@ from cacheout import Cache
 from pykeyboard import InlineKeyboard, InlineButton
 from pyrogram.types import InlineKeyboardMarkup
 from pyromod.helpers import ikb, array_chunk
-from bot import chanel, main_group, bot_name, extra_emby_libs, tz_id, tz_ad, tz_api, _open, sakura_b, \
+from bot import chanel, main_group, bot_name, extra_emby_libs, tz_id, tz_ad, tz_api, _open, credits, \
     schedall, auto_update, fuxx_pitao, moviepilot, red_envelope, config, LOGGER
 from bot.func_helper import nezha_res
 from bot.func_helper.emby import emby
@@ -351,7 +351,7 @@ def cr_renew_ikb():
     }.get(_open.invite_lv, '未知')
     keyboard = InlineKeyboard(row_width=2)
     keyboard.add(InlineButton(f'{checkin} 每日签到', f'set_renew-checkin'),
-                 InlineButton(f'{exchange} 自动{sakura_b}续期', f'set_renew-exchange'),
+                 InlineButton(f'{exchange} 自动{credits}续期', f'set_renew-exchange'),
                  InlineButton(f'{whitelist} 兑换白名单', f'set_renew-whitelist'),
                  InlineButton(f'{invite} 兑换邀请码', f'set_renew-invite'),
                  InlineButton(f'邀请等级: {invite_lv_text}', f'set_invite_lv')
@@ -464,7 +464,7 @@ async def cr_kk_ikb(uid, first):
         text += f"**· 🍉 TG&名称** | [{first}](tg://user?id={uid})\n" \
                 f"**· 🍒 识别のID** | `{uid}`\n" \
                 f"**· 🍓 当前状态** | {lv}\n" \
-                f"**· 🍥 持有{sakura_b}** | {iv}\n" \
+                f"**· 🍥 持有{credits}** | {iv}\n" \
                 f"**· 💠 账号名称** | {name}\n" \
                 f"**· 🚨 到期时间** | **{ex}**\n"
         text += text1

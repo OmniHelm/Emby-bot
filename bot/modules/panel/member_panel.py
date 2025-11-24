@@ -11,7 +11,7 @@ import math
 import random
 from datetime import timedelta, datetime
 from bot.schemas import ExDate, Yulv
-from bot import bot, LOGGER, _open, emby_line, sakura_b, ranks, group, extra_emby_libs, config, bot_name, schedall
+from bot import bot, LOGGER, _open, emby_line, credits, ranks, group, extra_emby_libs, config, bot_name, schedall
 from pyrogram import filters
 from bot.func_helper.emby import emby
 from bot.func_helper.filters import user_in_group_on_filter
@@ -188,7 +188,7 @@ async def members(_, call):
 • 📊 **账户状态**
   {status_text}
 
-• 🍒 **持有{sakura_b}**
+• 🍒 **持有{credits}**
   {us}
 
 • 💠 **Emby 账户**
@@ -677,7 +677,7 @@ async def call_exchange(_, call):
 async def do_store(_, call):
     await asyncio.gather(callAnswer(call, '✔️ 欢迎进入兑换商店'),
                          editMessage(call,
-                                     f'**🏪 请选择想要使用的服务：**\n\n🤖 自动{sakura_b}续期状态：{_open.exchange} {_open.exchange_cost}/月',
+                                     f'**🏪 请选择想要使用的服务：**\n\n🤖 自动{credits}续期状态：{_open.exchange} {_open.exchange_cost}/月',
                                      buttons=store_ikb()))
 
 
@@ -693,7 +693,7 @@ async def do_store_reborn(_, call):
                      True)
     if all([e.lv == 'c', e.iv >= _open.exchange_cost, schedall.low_activity]):
         await editMessage(call,
-                          f'🏪 您已满足基础要求，此次将花费 {_open.exchange_cost}{sakura_b} 解除未活跃的封禁，确认请回复 /ok，退出 /cancel')
+                          f'🏪 您已满足基础要求，此次将花费 {_open.exchange_cost}{credits} 解除未活跃的封禁，确认请回复 /ok，退出 /cancel')
         m = await callListen(call, 120, buttons=re_born_ikb)
         if m is False:
             return
@@ -703,13 +703,13 @@ async def do_store_reborn(_, call):
         else:
             sql_update_emby(Emby.tg == call.from_user.id, iv=e.iv - _open.exchange_cost, lv='b')
             await emby.emby_change_policy(emby_id=e.embyid)
-            LOGGER.info(f'【兑换解封】- {call.from_user.id} 已花费 {_open.exchange_cost}{sakura_b},解除封禁')
+            LOGGER.info(f'【兑换解封】- {call.from_user.id} 已花费 {_open.exchange_cost}{credits},解除封禁')
             await asyncio.gather(m.delete(), do_store(_, call),
                                  sendMessage(call, '解封成功<(￣︶￣)↗[GO!]\n此消息将在20s后自焚', timer=20))
     else:
         await sendMessage(call, '❌ 不满足以下要求！ヘ(￣ω￣ヘ)\n\n'
                                 '1. 被封禁账户\n'
-                                f'2. 至少持有 {_open.exchange_cost}{sakura_b}\n'
+                                f'2. 至少持有 {_open.exchange_cost}{credits}\n'
                                 f'3. 【定时策略】活跃检测开启'
                                 f'此消息将在20s后自焚', timer=20)
 
@@ -724,14 +724,14 @@ async def do_store_whitelist(_, call):
             return await callAnswer(call, '❌ 未查询到账户，不许乱点！', True)
         if e.iv < _open.whitelist_cost or e.lv == 'a':
             return await callAnswer(call,
-                                    f'🏪 兑换规则：\n当前兑换白名单需要 {_open.whitelist_cost} {sakura_b}，已有白名单无法再次消费。勉励',
+                                    f'🏪 兑换规则：\n当前兑换白名单需要 {_open.whitelist_cost} {credits}，已有白名单无法再次消费。勉励',
                                     True)
-        await callAnswer(call, f'🏪 您已满足 {_open.whitelist_cost} {sakura_b}要求', True)
+        await callAnswer(call, f'🏪 您已满足 {_open.whitelist_cost} {credits}要求', True)
         sql_update_emby(Emby.tg == call.from_user.id, lv='a', iv=e.iv - _open.whitelist_cost)
         send = await call.message.edit(f'**{random.choice(Yulv.load_yulv().wh_msg)}**\n\n'
                                        f'🎉 恭喜[{call.from_user.first_name}](tg://user?id={call.from_user.id}) 今日晋升，{ranks["logo"]}白名单')
         await send.forward(group[0])
-        LOGGER.info(f'【兑换白名单】- {call.from_user.id} 已花费 9999{sakura_b}，晋升白名单')
+        LOGGER.info(f'【兑换白名单】- {call.from_user.id} 已花费 9999{credits}，晋升白名单')
     else:
         await callAnswer(call, '❌ 管理员未开启此兑换', True)
 
@@ -748,7 +748,7 @@ async def do_store_invite(_, call):
             return await callAnswer(call, '❌ 账号等级不足，无法兑换', True)
         if e.iv < _open.invite_cost:
             return await callAnswer(call,
-                                    f'🏪 兑换规则：\n当前兑换注册码至少需要 {_open.invite_cost} {sakura_b}。你的账户只有 {e.iv} {sakura_b}，勉励',
+                                    f'🏪 兑换规则：\n当前兑换注册码至少需要 {_open.invite_cost} {credits}。你的账户只有 {e.iv} {credits}，勉励',
                                     True)
         await editMessage(call,
                           f'🎟️ 请回复创建 [类型] [数量] [模式]\n\n'
@@ -757,7 +757,7 @@ async def do_store_invite(_, call):
                           # f'**续期**： F - 注册码，T - 续期码\n'
                           f'**示例**：`mon 1 link` 记作 1条 月度注册链接 \n'
                           f'**示例**：`sea 1 code` 记作 1条 季度注册码\n'
-                          f'**注意**：兑率 30天 = {_open.invite_cost}{sakura_b}\n'
+                          f'**注意**：兑率 30天 = {_open.invite_cost}{credits}\n'
                           f'__取消本次操作，请 /cancel__')
         content = await callListen(call, 120)
         if content is False:
@@ -773,7 +773,7 @@ async def do_store_invite(_, call):
             if e.iv < cost:
                 return await asyncio.gather(content.delete(),
                                             sendMessage(call,
-                                                        f'您只有 {e.iv}{sakura_b}，而您需要花费 {cost}，超前消费是不可取的哦！？',
+                                                        f'您只有 {e.iv}{credits}，而您需要花费 {cost}，超前消费是不可取的哦！？',
                                                         timer=10),
                                             do_store(_, call))
             method = getattr(ExDate(), method)

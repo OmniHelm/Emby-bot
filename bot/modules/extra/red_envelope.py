@@ -14,7 +14,7 @@ from pyrogram import filters
 from pyrogram.types import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import func
 
-from bot import bot, prefixes, sakura_b, bot_photo, red_envelope
+from bot import bot, prefixes, credits, bot_photo, red_envelope
 from bot.func_helper.filters import user_in_group_on_filter
 from bot.func_helper.fix_bottons import users_iv_button
 from bot.func_helper.msg_utils import sendPhoto, sendMessage, callAnswer, editMessage
@@ -169,8 +169,8 @@ async def send_red_envelope(_, msg):
             msg.delete(),
             sendMessage(
                 msg,
-                f"**🧧 发红包：\n\n/red [总{sakura_b}数] [份数] [mode]**\n\n"
-                f"[mode]留空为拼手气, 任意值为均分\n专享红包请回复 + {sakura_b}",
+                f"**🧧 发红包：\n\n/red [总{credits}数] [份数] [mode]**\n\n"
+                f"[mode]留空为拼手气, 任意值为均分\n专享红包请回复 + {credits}",
                 timer=60,
             ),
         )
@@ -235,7 +235,7 @@ async def grab_red_envelope(_, call):
         amount = envelope.rest_money
         await callAnswer(
             call,
-            f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}\n\n{envelope.message}",
+            f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{credits}\n\n{envelope.message}",
             True,
         )
 
@@ -262,7 +262,7 @@ async def grab_red_envelope(_, call):
     envelope.rest_members -= 1
 
     await callAnswer(
-        call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{sakura_b}", True
+        call, f"🧧恭喜，你领取到了\n{envelope.sender_name} の {amount}{credits}", True
     )
 
     # 处理红包抢完后的展示
@@ -308,7 +308,7 @@ async def verify_red_envelope_sender(msg, money, is_private=False):
         if not all(conditions):
             error_msg = (
                 f"[{msg.from_user.first_name}](tg://user?id={msg.from_user.id}) "
-                f"违反规则，禁言一分钟。\nⅰ 所持有{sakura_b}不得小于5\nⅱ 发出{sakura_b}不得小于5"
+                f"违反规则，禁言一分钟。\nⅰ 所持有{credits}不得小于5\nⅱ 发出{credits}不得小于5"
             )
             if is_private:
                 error_msg += "\nⅲ 不许发自己"
@@ -353,7 +353,7 @@ async def generate_final_message(envelope):
     if envelope.type == "private":
         receiver = envelope.receivers[envelope.target_user]
         return (
-            f"🧧 {sakura_b}红包\n\n**{envelope.message}\n\n"
+            f"🧧 {credits}红包\n\n**{envelope.message}\n\n"
             f"🕶️{envelope.sender_name} **的专属红包已被 "
             f"[{receiver['name']}](tg://user?id={envelope.target_user}) 领取"
         )
@@ -364,15 +364,15 @@ async def generate_final_message(envelope):
     )
 
     text = (
-        f"🧧 {sakura_b}红包\n\n**{random.choice(Yulv.load_yulv().red_bag)}\n\n"
+        f"🧧 {credits}红包\n\n**{random.choice(Yulv.load_yulv().red_bag)}\n\n"
         f"😎 {envelope.sender_name} **的红包已经被抢光啦~\n\n"
     )
 
     for i, (user_id, details) in enumerate(sorted_receivers):
         if i == 0:
-            text += f"**🏆 手气最佳 [{details['name']}](tg://user?id={user_id}) **获得了 {details['amount']} {sakura_b}"
+            text += f"**🏆 手气最佳 [{details['name']}](tg://user?id={user_id}) **获得了 {details['amount']} {credits}"
         else:
-            text += f"\n**[{details['name']}](tg://user?id={user_id})** 获得了 {details['amount']} {sakura_b}"
+            text += f"\n**[{details['name']}](tg://user?id={user_id})** 获得了 {details['amount']} {credits}"
 
     return text
 
@@ -396,7 +396,7 @@ async def s_rank(_, msg):
                 sendMessage(
                     msg,
                     f"[{msg.from_user.first_name}]({msg.from_user.id}) "
-                    f"未私聊过bot或不足支付手续费5{sakura_b}，禁言一分钟。",
+                    f"未私聊过bot或不足支付手续费5{credits}，禁言一分钟。",
                     timer=60,
                 ),
             )
@@ -406,7 +406,7 @@ async def s_rank(_, msg):
             sender = msg.from_user.id
     elif msg.sender_chat.id == msg.chat.id:
         sender = msg.chat.id
-    reply = await msg.reply(f"已扣除手续5{sakura_b}, 请稍等......加载中")
+    reply = await msg.reply(f"已扣除手续5{credits}, 请稍等......加载中")
     text, i = await users_iv_rank()
     t = "❌ 数据库操作失败" if not text else text[0]
     button = await users_iv_button(i, 1, sender or msg.chat.id)
@@ -415,7 +415,7 @@ async def s_rank(_, msg):
         sendPhoto(
             msg,
             photo=bot_photo,
-            caption=f"**▎🏆 {sakura_b}风云录**\n\n{t}",
+            caption=f"**▎🏆 {credits}风云录**\n\n{t}",
             buttons=button,
         ),
     )
@@ -451,7 +451,7 @@ async def users_iv_rank():
                 for q in result:
                     name = str(members_dict.get(q.tg, q.tg))[:12]
                     medal = m[e - 1] if e < 4 else m[3]
-                    text += f"{medal}**第{cn2an.an2cn(e)}名** | [{name}](google.com?q={q.tg}) の **{q.iv} {sakura_b}**\n"
+                    text += f"{medal}**第{cn2an.an2cn(e)}名** | [{name}](google.com?q={q.tg}) の **{q.iv} {credits}**\n"
                     e += 1
                 a.append(text)
                 b += 1
@@ -476,4 +476,4 @@ async def users_iv_pikb(_, call):
     a, b = await users_iv_rank()
     button = await users_iv_button(b, j, tg)
     text = a[j - 1]
-    await editMessage(call, f"**▎🏆 {sakura_b}风云录**\n\n{text}", buttons=button)
+    await editMessage(call, f"**▎🏆 {credits}风云录**\n\n{text}", buttons=button)
