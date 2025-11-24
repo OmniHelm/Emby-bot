@@ -124,10 +124,10 @@ systemctl enable docker
 docker-compose up -d
 
 # 查看日志
-docker-compose logs -f embyboss
+docker-compose logs -f embybot
 
 # 重启服务
-docker-compose restart embyboss
+docker-compose restart embybot
 
 # 停止服务
 docker-compose down
@@ -230,14 +230,14 @@ journalctl -u embybot -f
 **本地模式**:
 - 确保 MySQL 服务已启动
 - 检查用户名、密码、数据库名是否正确
-- 确保数据库已创建：`CREATE DATABASE embyboss CHARACTER SET utf8mb4;`
+- 确保数据库已创建：`CREATE DATABASE embybot CHARACTER SET utf8mb4;`
 
 ### 5. Bot 无法启动？
 
 1. **检查日志**:
    ```bash
    # Docker 模式
-   docker-compose logs -f embyboss
+   docker-compose logs -f embybot
 
    # 本地模式
    tail -f log/bot.log
@@ -356,10 +356,10 @@ systemctl restart embybot  # 或 python3 main.py
 |------|------|
 | `docker-compose up -d` | 启动服务 |
 | `docker-compose down` | 停止服务 |
-| `docker-compose restart embyboss` | 重启 Bot |
-| `docker-compose logs -f embyboss` | 查看日志 |
+| `docker-compose restart embybot` | 重启 Bot |
+| `docker-compose logs -f embybot` | 查看日志 |
 | `docker-compose pull` | 更新镜像 |
-| `docker exec -it embyboss bash` | 进入容器 |
+| `docker exec -it embybot bash` | 进入容器 |
 
 ### 本地模式 (systemd)
 

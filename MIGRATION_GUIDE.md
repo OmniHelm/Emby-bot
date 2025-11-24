@@ -8,9 +8,10 @@
 
 ## ⚠️ 重要提示
 
-✅ **数据库完全兼容** - 无需任何数据库迁移操作  
-✅ **功能完全兼容** - 所有功能保持不变  
+✅ **数据库数据完全兼容** - 数据表结构和数据无需任何修改
+✅ **功能完全兼容** - 所有功能保持不变
 ⚠️ **配置文件需要更新** - 必须修改配置文件字段名
+⚠️ **数据库名称已变更** - 默认从 `embyboss` 改为 `embybot`（见下方说明）
 
 ---
 
@@ -103,14 +104,52 @@ cp ../config.json.backup config.json
 services:
   embyboss:
     container_name: embyboss
+    environment:
+      MYSQL_DATABASE: embyboss
 
 # 修改后
 services:
   embybot:
     container_name: embybot
+    environment:
+      MYSQL_DATABASE: embybot  # 数据库名也改了
 ```
 
-**如果使用自定义的 docker-compose.yml**，请更新服务名。
+**⚠️ 重要：数据库名称变更处理**
+
+新版本默认数据库名从 `embyboss` 改为 `embybot`。你有两个选择：
+
+**方案 A：保持使用旧数据库名（推荐，无需迁移数据）**
+```bash
+# 在 config.json 中配置旧数据库名
+{
+  "db_name": "embyboss"  # 继续使用旧数据库名
+}
+```
+
+**方案 B：重命名数据库（彻底去叉）**
+```bash
+# 进入 MySQL 容器
+docker exec -it mysql mysql -u root -p
+
+# 重命名数据库
+CREATE DATABASE embybot CHARACTER SET utf8mb4;
+RENAME TABLE embyboss.emby TO embybot.emby;
+RENAME TABLE embyboss.Rcode TO embybot.Rcode;
+RENAME TABLE embyboss.favorites TO embybot.favorites;
+RENAME TABLE embyboss.request_record TO embybot.request_record;
+# ... 重命名所有表
+
+# 删除旧数据库
+DROP DATABASE embyboss;
+
+# 更新 config.json
+{
+  "db_name": "embybot"
+}
+```
+
+**如果使用自定义的 docker-compose.yml**，请更新服务名和数据库名。
 
 ### 步骤 6: 启动新服务
 
@@ -215,12 +254,16 @@ docker-compose up -d
 
 验证数据库数据：
 ```bash
-# Docker 模式
+# Docker 模式（使用你实际的数据库名）
 docker exec -it mysql mysql -u root -p -e "USE embyboss; SELECT COUNT(*) FROM emby;"
+# 或如果改了数据库名
+docker exec -it mysql mysql -u root -p -e "USE embybot; SELECT COUNT(*) FROM emby;"
 
 # 直接模式
 mysql -u root -p -e "USE embyboss; SELECT COUNT(*) FROM emby;"
 ```
+
+**重要**：如果你保持使用旧数据库名 `embyboss`，确保 `config.json` 中 `db_name` 仍然是 `"embyboss"`。
 
 ### Q4: 旧版本和新版本可以共存吗？
 

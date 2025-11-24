@@ -43,12 +43,17 @@ credits = config.credits_name
 |------|-------|-------|
 | Docker 服务名 | `embyboss` | `embybot` |
 | 容器名 | `embyboss` | `embybot` |
+| 数据库默认名 | `embyboss` | `embybot` |
 | systemd 服务文件 | `embyboss.service` | `embybot.service` |
+| systemd 重启命令 | `systemctl restart embyboss` | `systemctl restart embybot` |
 | 服务描述 | "此处填写您的服务名" | "EmbyBot Service" |
 
 **影响文件**:
-- `docker-compose.yml`
+- `docker-compose.yml` - 服务名、容器名、数据库名
 - `embyboss.service` → `embybot.service`
+- `bot/modules/panel/sched_panel.py` - 硬编码的重启命令
+- `deploy.sh` - 部署提示和默认值（5处）
+- `DEPLOY.md` - 文档示例命令（7处）
 
 ### 4. 提示语规范化
 
@@ -101,13 +106,20 @@ credits = config.credits_name
 
 ---
 
-## 🔄 不受影响的内容
+## 🔄 数据库相关
 
-### 数据库
+### 数据库表结构
 ✅ **完全不受影响**
 - 所有数据表结构保持不变
 - 所有字段名保持不变
 - 现有数据完全兼容
+
+### 数据库名称
+⚠️ **默认名称已变更**
+- 旧默认值: `embyboss`
+- 新默认值: `embybot`
+- **影响**: 仅影响新部署，现有部署可继续使用旧数据库名
+- **迁移方案**: 详见 `MIGRATION_GUIDE.md` 第5步
 
 ### 功能逻辑
 ✅ **完全不受影响**
@@ -140,3 +152,116 @@ credits = config.credits_name
 4. 保持 100% 向后兼容（数据库层面）
 
 所有修改均已完成并测试通过。
+
+---
+
+## 🔧 额外修复（针对用户反馈）
+
+### 1. 硬编码的服务名
+- ✅ `bot/modules/panel/sched_panel.py:164`
+  - 修复: `systemctl restart embyboss` → `systemctl restart embybot`
+  - 影响: `/restart` 命令现在能正确重启服务
+
+### 2. 部署脚本提示
+- ✅ `deploy.sh`
+  - 行 217: 数据库默认名 `embyboss` → `embybot`
+  - 行 615: 日志查看命令
+  - 行 617: 重启服务命令
+  - 行 656-657: 管理命令提示
+  - 影响: 用户按提示执行命令不会报错
+
+### 3. 数据库默认名称
+- ✅ `docker-compose.yml:13`
+  - 修复: `MYSQL_DATABASE: embyboss` → `MYSQL_DATABASE: embybot`
+  - 影响: 新部署使用新数据库名
+  - **重要**: 现有部署可在 `config.json` 中配置 `"db_name": "embyboss"` 继续使用旧库
+
+### 4. 文档示例命令
+- ✅ `DEPLOY.md`
+  - 修复 7 处 `embyboss` → `embybot`
+  - 包括日志查看、服务重启、数据库创建等命令
+
+---
+
+## 📝 完整修改清单
+
+### 核心配置（保持数据兼容）
+- `bot/schemas/schemas.py` - 配置模型
+- `bot/__init__.py` - 全局变量
+- `config_example.json` - 配置示例
+
+### 代码变量（13个文件）
+- 所有 `sakura_b` → `credits`
+
+### 服务和容器（完整重命名）
+- `docker-compose.yml` - 服务名、容器名、数据库名
+- `embyboss.service` → `embybot.service`
+- `bot/modules/panel/sched_panel.py` - systemctl 命令
+- `deploy.sh` - 5处提示和默认值
+- `DEPLOY.md` - 7处示例命令
+
+### 提示语规范化
+- `bot/modules/panel/sched_panel.py` - 7+ 处规范化
+
+### 文档
+- `MIGRATION_GUIDE.md` - 详细迁移指南（含数据库名变更说明）
+- `REFACTORING_CHANGELOG.md` - 本文档
+
+---
+
+## ⚠️ 迁移注意事项
+
+### 对于新部署
+无需任何特殊操作，按照 README.md 正常部署即可。
+
+### 对于现有部署
+**必读** `MIGRATION_GUIDE.md`，特别注意：
+
+1. **配置文件字段更新** - 必须
+   ```json
+   {
+     "money": "xxx"  →  "credits_name": "xxx",
+     "ranks": { "logo": "SAKURA" }  →  { "logo": "EmbyBot" }
+   }
+   ```
+
+2. **数据库名称处理** - 可选
+   - **方案 A（推荐）**: 在 `config.json` 中保持 `"db_name": "embyboss"`
+   - **方案 B**: 重命名数据库为 `embybot`（需执行 SQL）
+
+3. **服务名更新** - Docker 模式必须
+   - 容器服务名: `embyboss` → `embybot`
+   - 管理命令: `docker-compose logs -f embybot`
+
+4. **Systemd 服务** - 直接部署可选
+   - 重命名服务文件或更新 systemctl 命令
+
+---
+
+## 🎯 重构效果总结
+
+### 消除的原项目特征
+- ❌ `sakura`/`SAKURA` 相关命名
+- ❌ `embyboss` 命名（完全改为 `embybot`）
+- ❌ 【】样式提示语
+- ❌ 过度使用的 emoji
+- ❌ 所有硬编码的旧服务名
+
+### 提升的专业性
+- ✅ 标准化变量命名（`credits`）
+- ✅ 统一服务命名（`embybot`）
+- ✅ 规范化日志格式（`[Module]`）
+- ✅ 清晰的模块前缀
+- ✅ 简洁专业的提示语
+- ✅ 完善的迁移文档
+
+### 保持的兼容性
+- ✅ 数据表结构 100% 不变
+- ✅ 功能逻辑 100% 不变
+- ✅ API 接口 100% 不变
+- ✅ 现有数据库可继续使用
+
+---
+
+**重构完成日期**: 2025-11-24  
+**重构状态**: ✅ 完成并验证

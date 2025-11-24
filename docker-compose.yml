@@ -10,7 +10,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: 123456 # root管理员用户密码
       MYSQL_USER: susu   # 创建需要连接的用户
-      MYSQL_DATABASE: embyboss # 数据库名字
+      MYSQL_DATABASE: embybot # 数据库名字
       MYSQL_PASSWORD: 1234  # 设置普通用户的密码
       MYSQL_ROOT_HOST: "%" # 所有ip可连接
     ports:
@@ -18,19 +18,6 @@ services:
     volumes:
       - /root/Emby-bot/db:/var/lib/mysql
 
-  # 以下 phpmyadmin 主要是为了更为直观的供owner翻阅数据，不影响bot运行，如有其他合适软件，可注释内容 # xxxx
-#  phpmyadmin:
-#    image: phpmyadmin/phpmyadmin
-#    container_name: phpmyadmin
-#    restart: always
-#    ports:
-#      - 8080:80  #映射端口可以自己改的
-#    environment:
-#      MYSQL_ROOT_PASSWORD: "123456"
-#      PMA_HOST: mysql
-#      PMA_PORT: 3306
-#    depends_on:
-#      - mysql
 
   embybot:
     image: ghcr.io/omnihelm/emby-bot:latest # 使用 GitHub Container Registry，ARM与AMD镜像名称相同，会自动加载适合的镜像

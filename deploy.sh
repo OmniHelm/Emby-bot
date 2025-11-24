@@ -214,7 +214,7 @@ main() {
         read_input "数据库端口" "3306" DB_PORT
         read_input "数据库用户名" "susu" DB_USER
         read_input "数据库密码" "1234" DB_PWD true
-        read_input "数据库名称" "embyboss" DB_NAME
+        read_input "数据库名称" "embybot" DB_NAME
         DB_IS_DOCKER=true
         read_input "MySQL Docker 容器名称" "mysql" DB_DOCKER_NAME
     else
@@ -612,9 +612,9 @@ EOF
             $COMPOSE_CMD up -d
 
             print_success "Docker 服务已启动"
-            print_info "查看日志: $COMPOSE_CMD logs -f embyboss"
+            print_info "查看日志: $COMPOSE_CMD logs -f embybot"
             print_info "停止服务: $COMPOSE_CMD down"
-            print_info "重启服务: $COMPOSE_CMD restart embyboss"
+            print_info "重启服务: $COMPOSE_CMD restart embybot"
         fi
     else
         print_info "检测到使用本地部署模式"
@@ -653,8 +653,8 @@ EOF
     echo "  2. 日志目录: ./log"
     if [ "$USE_DOCKER" = true ]; then
         echo "  3. 管理命令:"
-        echo "     - 查看日志: $COMPOSE_CMD logs -f embyboss"
-        echo "     - 重启服务: $COMPOSE_CMD restart embyboss"
+        echo "     - 查看日志: $COMPOSE_CMD logs -f embybot"
+        echo "     - 重启服务: $COMPOSE_CMD restart embybot"
         echo "     - 停止服务: $COMPOSE_CMD down"
         echo "     - 更新镜像: $COMPOSE_CMD pull && $COMPOSE_CMD up -d"
     else
