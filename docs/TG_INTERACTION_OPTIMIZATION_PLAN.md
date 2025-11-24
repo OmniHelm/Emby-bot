@@ -1998,7 +1998,7 @@ user_data = {
     'name': msg.from_user.first_name,
     'lv': user.lv,
     'coins': user.iv,
-    'coin_name': sakura_b,
+    'coin_name': credits,
     'emby_name': user.name,
     'ex': user.ex,
     'cr': user.cr,

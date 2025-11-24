@@ -106,7 +106,7 @@ text = f"""
 • 📊 **账户状态**
   {MessageFormatter.format_status(lv)}
 
-• 🍒 **持有{sakura_b}**
+• 🍒 **持有{credits}**
   {us}
 
 **系统状态：**
