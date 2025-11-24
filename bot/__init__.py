@@ -63,7 +63,6 @@ red_envelope = config.red_envelope
 moviepilot = config.moviepilot
 auto_update = config.auto_update
 api = config.api
-save_config()
 
 LOGGER.info("配置文件加载完毕")
 from pyrogram.types import BotCommand

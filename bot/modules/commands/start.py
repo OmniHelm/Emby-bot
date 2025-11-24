@@ -17,6 +17,10 @@ from bot.func_helper.fix_bottons import group_f, judge_start_ikb, judge_group_ik
 from bot.modules.extra import user_cha_ip
 from bot import bot, prefixes, group, bot_photo, ranks, sakura_b
 
+# 导入优化模块
+from bot.constants.messages import Messages
+from bot.func_helper.message_formatter import MessageFormatter
+
 
 # 反命令提示
 @bot.on_message((filters.command('start', prefixes) | filters.command('count', prefixes)) & filters.chat(group))
@@ -48,11 +52,11 @@ async def count_info(_, msg):
 @bot.on_message(filters.command('start', prefixes) & filters.private)
 async def p_start(_, msg):
     if not await user_in_group_filter(_, msg):
+        # 优化：使用消息模板
+        group_links = "请点击下方按钮加入"  # 这里可以从配置读取
+        error_msg = Messages.ERROR_NOT_IN_GROUP.format(group_links=group_links)
         return await asyncio.gather(deleteMessage(msg),
-                                    sendMessage(msg,
-                                                '💢 拜托啦！请先点击下面加入我们的群组和频道，然后再 /start 一下好吗？\n\n'
-                                                '⁉️ ps：如果您已在群组中且收到此消息，请联系管理员解除您的权限限制，因为被限制用户无法使用本bot。',
-                                                buttons=judge_group_ikb))
+                                    sendMessage(msg, error_msg, buttons=judge_group_ikb))
     try:
         u = msg.command[1].split('-')[0]
         if u == 'userip':
@@ -68,32 +72,84 @@ async def p_start(_, msg):
     except (IndexError, TypeError):
         data = await members_info(tg=msg.from_user.id)
         is_admin = judge_admins(msg.from_user.id)
+
+        # 新用户首次使用
         if not data:
             sql_add_emby(msg.from_user.id)
-            await asyncio.gather(deleteMessage(msg),
-                                 sendPhoto(msg, bot_photo,
-                                           f"**✨ 只有你想见我的时候我们的相遇才有意义**\n\n"
-                                           f"🍉__你好鸭 [{msg.from_user.first_name}](tg://user?id={msg.from_user.id}) \n\n"
-                                           f"初次使用，录入数据库完成。\n"
-                                           f"请点击 /start 重新召唤面板"))
+
+            # 优化：使用欢迎消息模板
+            welcome_msg = Messages.SYSTEM_WELCOME.format(
+                first_name=msg.from_user.first_name
+            )
+
+            # 添加注册提示
+            register_tip = "\n\n**已完成数据库录入**\n请再次点击 /start 召唤主面板"
+
+            await asyncio.gather(
+                deleteMessage(msg),
+                sendPhoto(msg, bot_photo, welcome_msg + register_tip)
+            )
             return
+
         name, lv, ex, us, embyid, pwd2 = data
         stat, all_user, tem, timing = await open_check()
-        text = f"▎__欢迎进入用户面板！{msg.from_user.first_name}__\n\n" \
-               f"**· 🆔 用户のID** | `{msg.from_user.id}`\n" \
-               f"**· 📊 当前状态** | {lv}\n" \
-               f"**· 🍒 积分{sakura_b}** | {us}\n" \
-               f"**· ®️ 注册状态** | {stat}\n" \
-               f"**· 🎫 总注册限制** | {all_user}\n" \
-               f"**· 🎟️ 可注册席位** | {all_user - tem}\n"
+
+        # 优化：美化用户面板信息
+        status_text = MessageFormatter.format_status(lv) if lv in ['a', 'b', 'c', 'd'] else lv
+        stat_text = "✅ 开放注册" if stat else "❌ 已关闭"
+        available_slots = all_user - tem
+
+        text = f"""
+╭─────────────────╮
+│  🏠 **主面板**
+╰─────────────────╯
+
+欢迎回来，{msg.from_user.first_name}！
+
+**个人信息：**
+• 🆔 **Telegram ID**
+  `{msg.from_user.id}`
+
+• 📊 **账户状态**
+  {status_text}
+
+• 🍒 **持有{sakura_b}**
+  {us}
+
+**系统状态：**
+• ®️ **注册状态**
+  {stat_text}
+
+• 🎫 **总注册限制**
+  {all_user} 个
+
+• 🎟️ **可注册席位**
+  {available_slots} 个
+
+---
+
+请选择下方功能 👇
+"""
+
         if not embyid:
-            await asyncio.gather(deleteMessage(msg),
-                                 sendPhoto(msg, bot_photo, caption=text, buttons=judge_start_ikb(is_admin, False)))
+            # 未创建账户
+            await asyncio.gather(
+                deleteMessage(msg),
+                sendPhoto(msg, bot_photo, caption=text, buttons=judge_start_ikb(is_admin, False))
+            )
         else:
-            await asyncio.gather(deleteMessage(msg),
-                                 sendPhoto(msg, bot_photo,
-                                           f"**✨ 只有你想见我的时候我们的相遇才有意义**\n\n🍉__你好鸭 [{msg.from_user.first_name}](tg://user?id={msg.from_user.id}) 请选择功能__👇",
-                                           buttons=judge_start_ikb(is_admin, True)))
+            # 已有账户 - 简化欢迎消息
+            welcome_text = f"""
+✨ **欢迎回来！**
+
+你好，{MessageFormatter.format_user_link(msg.from_user.id, msg.from_user.first_name)}
+
+请选择功能 👇
+"""
+            await asyncio.gather(
+                deleteMessage(msg),
+                sendPhoto(msg, bot_photo, welcome_text, buttons=judge_start_ikb(is_admin, True))
+            )
 
 
 # 返回面板

@@ -5,6 +5,7 @@ from bot.sql_helper import Base, Session, engine
 from sqlalchemy import Column, BigInteger, String, DateTime, Integer, case
 from sqlalchemy import func
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from bot import LOGGER
 
 
@@ -39,8 +40,16 @@ def sql_add_emby(tg: int):
             emby = Emby(tg=tg)
             session.add(emby)
             session.commit()
-        except:
-            pass
+            LOGGER.debug(f"添加 emby 记录成功 tg={tg}")
+            return True
+        except IntegrityError:
+            session.rollback()
+            LOGGER.debug(f"emby 记录已存在 tg={tg}")
+            return False
+        except Exception as e:
+            session.rollback()
+            LOGGER.error(f"添加 emby 记录失败 tg={tg} err={e}")
+            return False
 
 def sql_delete_emby_by_tg(tg):
     """
@@ -73,6 +82,7 @@ def sql_clear_emby_iv():
             return True
         except Exception as e:
             LOGGER.error(f"清除所有emby的iv时发生异常 {e}")
+            session.rollback()
             return False
 
 def sql_delete_emby(tg=None, embyid=None, name=None):
@@ -131,7 +141,8 @@ def sql_update_embys(some_list: list, method=None):
                 session.bulk_update_mappings(Emby, mappings)
                 session.commit()
                 return True
-            except:
+            except Exception as e:
+                LOGGER.error(f"批量更新 iv 失败: {e}")
                 session.rollback()
                 return False
         if method == 'ex':
@@ -140,7 +151,8 @@ def sql_update_embys(some_list: list, method=None):
                 session.bulk_update_mappings(Emby, mappings)
                 session.commit()
                 return True
-            except:
+            except Exception as e:
+                LOGGER.error(f"批量更新 ex 失败: {e}")
                 session.rollback()
                 return False
         if method == 'bind':
@@ -165,7 +177,8 @@ def sql_get_emby(tg):
             # 使用or_方法来表示或者的逻辑，如果有tg就用tg，如果有embyid就用embyid，如果有name就用name，如果都没有就返回None
             emby = session.query(Emby).filter(or_(Emby.tg == tg, Emby.name == tg, Emby.embyid == tg)).first()
             return emby
-        except:
+        except Exception as e:
+            LOGGER.error(f"查询 emby 记录失败 tg={tg} err={e}")
             return None
 
 
@@ -197,7 +210,8 @@ def get_all_emby(condition):
         try:
             embies = session.query(Emby).filter(condition).all()
             return embies
-        except:
+        except Exception as e:
+            LOGGER.error(f"查询 emby 列表失败: {e}")
             return None
 
 
@@ -218,6 +232,7 @@ def sql_update_emby(condition, **kwargs):
             return True
         except Exception as e:
             LOGGER.error(e)
+            session.rollback()
             return False
 
 
@@ -251,7 +266,7 @@ def sql_count_emby():
                 func.count(case((Emby.lv == "a", 1))).label("lv_a_count")
             ).first()
         except Exception as e:
-            # print(e)
+            LOGGER.error(f"统计 emby 失败: {e}")
             return None, None, None
         else:
             return count.tg_count, count.embyid_count, count.lv_a_count

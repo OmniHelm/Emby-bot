@@ -17,6 +17,73 @@ from bot.func_helper.msg_utils import sendMessage, editMessage
 from bot.func_helper.utils import split_long_message
 import asyncio
 
+# 导入优化模块
+from bot.func_helper.message_formatter import MessageFormatter
+from bot.constants.messages import Messages
+
+
+def assess_ip_risk(user_count: int, activity_counts: list) -> dict:
+    """
+    评估 IP 使用风险
+
+    Args:
+        user_count: 使用该 IP 的用户数量
+        activity_counts: 每个用户的活动次数列表
+
+    Returns:
+        包含风险等级、描述和建议的字典
+    """
+    risk_data = {
+        'level': '🟢 低风险',
+        'emoji': '🟢',
+        'description': '',
+        'suggestions': []
+    }
+
+    # 基于用户数量评估
+    if user_count >= 5:
+        risk_data['level'] = '🔴 高风险'
+        risk_data['emoji'] = '🔴'
+        risk_data['description'] = f'该 IP 被 {user_count} 个账户使用，**存在明显的账号共享行为**'
+        risk_data['suggestions'] = [
+            '立即调查相关账户',
+            '检查账户是否存在异常登录',
+            '必要时限制该 IP 访问',
+            '警告或封禁相关用户'
+        ]
+    elif user_count >= 3:
+        risk_data['level'] = '🟡 中风险'
+        risk_data['emoji'] = '🟡'
+        risk_data['description'] = f'该 IP 被 {user_count} 个账户使用，**可能存在账号共享**'
+        risk_data['suggestions'] = [
+            '密切关注相关账户活动',
+            '检查是否为家庭网络共享',
+            '必要时进行警告',
+            '定期复查该 IP 使用情况'
+        ]
+    else:
+        risk_data['level'] = '🟢 低风险'
+        risk_data['emoji'] = '🟢'
+        risk_data['description'] = '该 IP 使用情况正常，未发现异常'
+        risk_data['suggestions'] = [
+            '保持常规监控',
+            '无需特殊处理'
+        ]
+
+    # 基于活动频率评估
+    if activity_counts:
+        avg_activity = sum(activity_counts) / len(activity_counts)
+        max_activity = max(activity_counts)
+
+        if max_activity > 1000:
+            if risk_data['emoji'] == '🟢':
+                risk_data['level'] = '🟡 中风险'
+                risk_data['emoji'] = '🟡'
+            risk_data['description'] += f'\n该 IP 存在高频活动（最高 {max_activity} 次），需关注'
+            risk_data['suggestions'].append('检查是否存在自动化访问')
+
+    return risk_data
+
 
 @bot.on_message(filters.command("auditip") & admins_on_filter)
 async def audit_ip_command(_, message: Message):
@@ -91,18 +158,47 @@ async def audit_ip_command(_, message: Message):
             await editMessage(processing_msg, no_data_text)
             return
 
-        # 构建审计报告
-        report_text = "📊 **IP 审计报告**\n\n"
-        report_text += f"**🌐 IP 地址:** `{ip_address}`\n"
-        report_text += f"**📅 查询范围:** {days if days else '所有时间'}\n"
-        report_text += f"**👥 发现用户:** {len(result)} 个\n\n"
-        
         # 按活动时间排序
         sorted_users = sorted(result, key=lambda x: x['LastActivity'], reverse=True)
-        
-        report_text += "**📋 用户活动详情:**\n"
-        report_text += "=" * 40 + "\n"
-        
+
+        # 提取活动次数用于风险评估
+        activity_counts = [user['ActivityCount'] for user in result]
+
+        # 进行风险评估
+        risk_assessment = assess_ip_risk(len(result), activity_counts)
+
+        # 构建优化后的审计报告
+        report_text = f"""
+╭─────────────────╮
+│  📊 **IP 审计报告**
+╰─────────────────╯
+
+**🌐 IP 地址**
+   `{ip_address}`
+
+**📅 查询范围**
+   {f'最近 {days} 天' if days else '所有时间'}
+
+**👥 发现用户**
+   {len(result)} 个账户
+
+---
+
+**🚨 风险评估**
+
+**风险等级：** {risk_assessment['level']}
+
+**分析结果：**
+{risk_assessment['description']}
+
+**处理建议：**
+{''.join([f'• {suggestion}\n' for suggestion in risk_assessment['suggestions']])}
+
+---
+
+**📋 用户活动详情**
+"""
+
         for i, user_info in enumerate(sorted_users, 1):
             # 格式化最后活动时间
             try:
@@ -110,20 +206,23 @@ async def audit_ip_command(_, message: Message):
                 formatted_time = last_activity.strftime('%Y-%m-%d %H:%M:%S')
             except (ValueError, TypeError, KeyError):
                 formatted_time = user_info['LastActivity']
-            
-            report_text += f"**{i}. {user_info['Username']}**\n"
-            report_text += f"   • 用户ID: `{user_info['UserId']}`\n"
-            report_text += f"   • 设备名: `{user_info['DeviceName']}`\n"
-            report_text += f"   • 客户端: `{user_info['ClientName']}`\n"
-            report_text += f"   • 最后活动: `{formatted_time}`\n"
-            report_text += f"   • 活动次数: `{user_info['ActivityCount']}`\n\n"
 
-        # 添加安全提醒
-        if len(result) > 1:
-            report_text += "⚠️ **安全提醒:**\n"
-            report_text += f"发现 {len(result)} 个用户使用同一 IP 地址，请注意是否存在账号共享行为。\n\n"
-        
-        report_text += f"**📊 审计完成时间:** `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
+            report_text += f"""
+**{i}. {user_info['Username']}**
+   • 用户ID：`{user_info['UserId']}`
+   • 设备名：`{user_info['DeviceName']}`
+   • 客户端：`{user_info['ClientName']}`
+   • 最后活动：`{formatted_time}`
+   • 活动次数：`{user_info['ActivityCount']}` 次
+"""
+
+        report_text += f"""
+---
+
+**📊 审计信息**
+• 审计人：{message.from_user.first_name}
+• 完成时间：`{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+"""
         report_texts = split_long_message(report_text, 2000)
         for report_text in report_texts:
             try:

@@ -7,7 +7,7 @@ import asyncio
 
 from pyrogram import filters
 
-from bot import bot, ranks, bot_photo, bot_name
+from bot import bot, ranks, bot_photo, bot_name, LOGGER
 from bot.func_helper.filters import user_in_group_on_filter
 from pyrogram.types import (InlineQueryResultArticle, InputTextMessageContent,
                             InlineKeyboardMarkup, InlineKeyboardButton, InlineQuery, ChosenInlineResult)
@@ -92,8 +92,8 @@ async def find_sth_media(_, inline_query: InlineQuery):
                                           is_personal=True,
                                           next_offset='10' if not inline_query.offset else '',
                                           switch_pm_parameter='start')
-    except BadRequest:
-        pass
+    except BadRequest as e:
+        LOGGER.warning(f"内联查询发送失败: {e}")
 
 
 @bot.on_callback_query(filters.regex('favorited'))
@@ -107,7 +107,8 @@ async def favorite_item(_, call):
             _url = f"{emby.url}/emby/Items/{item_id}/Images/Primary?maxHeight=400&maxWidth=600&quality=90"
             try:
                 await bot.send_photo(chat_id=call.from_user.id, photo=_url, caption=f'**{title} 收藏成功！💘**')
-            except:
+            except Exception as e:
+                LOGGER.warning(f"收藏成功但发送图片失败，改用文本: {e}")
                 await bot.send_message(chat_id=call.from_user.id, text=f'**{title} 收藏成功！💘**')
             await callAnswer(call, f'{title} 收藏成功！💘', True)
         else:

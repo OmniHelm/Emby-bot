@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 from bot import bot, bot_photo, group, sakura_b, LOGGER, ranks, _open 
 from bot.func_helper.emby import emby
-from bot.func_helper.utils import convert_to_beijing_time, convert_s, cache, get_users, tem_deluser
+from bot.func_helper.utils import convert_to_beijing_time, convert_s, get_users, tem_deluser, _async_ttl_cache
 from bot.sql_helper import Session
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_embys, Emby, sql_update_emby
 from bot.func_helper.fix_bottons import plays_list_button
@@ -14,72 +14,74 @@ class Uplaysinfo:
     client = emby
 
     @classmethod
-    @cache.memoize(ttl=120)
     async def users_playback_list(cls, days):
-        try:
-            play_list = await emby.emby_cust_commit(emby_id=None, days=days, method='sp')
-        except Exception as e:
-            print(f"Error fetching playback list: {e}")
-            return None, 1, 1
+        async def _fetch():
+            try:
+                play_list = await emby.emby_cust_commit(emby_id=None, days=days, method='sp')
+            except Exception as e:
+                print(f"Error fetching playback list: {e}")
+                return None, 1, 1
 
-        if play_list is None:
-            return None, 1, 1
+            if play_list is None:
+                return None, 1, 1
 
-        with Session() as session:
-            # 更高效地查询 Emby 表的数据
-            result = session.query(Emby).filter(Emby.name.isnot(None)).all()
+            with Session() as session:
+                # 更高效地查询 Emby 表的数据
+                result = session.query(Emby).filter(Emby.name.isnot(None)).all()
 
-            if not result:
-                return None, 1
+                if not result:
+                    return None, 1
 
-            total_pages = math.ceil(len(play_list) / 10)
-            members = await get_users()
-            members_dict = {}
+                total_pages = math.ceil(len(play_list) / 10)
+                members = await get_users()
+                members_dict = {}
 
-            for record in result:
-                members_dict[record.name] = {
-                    "name": members.get(record.tg, '未绑定bot或已删除'),
-                    "tg": record.tg,
-                    "lv": record.lv,
-                    "iv": record.iv
-                }
+                for record in result:
+                    members_dict[record.name] = {
+                        "name": members.get(record.tg, '未绑定bot或已删除'),
+                        "tg": record.tg,
+                        "lv": record.lv,
+                        "iv": record.iv
+                    }
 
-            rank_medals = ["🥇", "🥈", "🥉", "🏅"]
-            rank_points = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100]
+                rank_medals = ["🥇", "🥈", "🥉", "🏅"]
+                rank_points = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100]
 
-            pages_data = []
-            leaderboard_data = []
+                pages_data = []
+                leaderboard_data = []
 
-            for page_number in range(1, total_pages + 1):
-                start_index = (page_number - 1) * 10
-                end_index = start_index + 10
-                page_data = f'**▎🏆{ranks.logo} {days} 天观影榜**\n\n'
+                for page_number in range(1, total_pages + 1):
+                    start_index = (page_number - 1) * 10
+                    end_index = start_index + 10
+                    page_data = f'**▎🏆{ranks.logo} {days} 天观影榜**\n\n'
 
-                for rank, play_record in enumerate(play_list[start_index:end_index], start=start_index + 1):
-                    medal = rank_medals[rank - 1] if rank < 4 else rank_medals[3]
-                    member_info = members_dict.get(play_record[0], None)
+                    for rank, play_record in enumerate(play_list[start_index:end_index], start=start_index + 1):
+                        medal = rank_medals[rank - 1] if rank < 4 else rank_medals[3]
+                        member_info = members_dict.get(play_record[0], None)
 
-                    if not member_info or not member_info["tg"]:
-                        emby_name = '未绑定bot或已删除'
-                        tg = 'None'
-                    else:
-                        emby_name = member_info["name"]
-                        tg = member_info["tg"]
+                        if not member_info or not member_info["tg"]:
+                            emby_name = '未绑定bot或已删除'
+                            tg = 'None'
+                        else:
+                            emby_name = member_info["name"]
+                            tg = member_info["tg"]
 
-                        # 计算积分
-                        points = rank_points[rank - 1] + (int(play_record[1]) // 60) if rank <= 10 else (
-                                    int(play_record[1]) // 60)
-                        new_iv = member_info["iv"] + points
-                        leaderboard_data.append([member_info["tg"], new_iv, f'{medal}{emby_name}', points])
+                            # 计算积分
+                            points = rank_points[rank - 1] + (int(play_record[1]) // 60) if rank <= 10 else (
+                                        int(play_record[1]) // 60)
+                            new_iv = member_info["iv"] + points
+                            leaderboard_data.append([member_info["tg"], new_iv, f'{medal}{emby_name}', points])
 
-                    formatted_time = await convert_s(int(play_record[1]))
-                    page_data += f'{medal}**第{cn2an.an2cn(rank)}名** | [{emby_name}](https://www.google.com/search?q={tg})\n' \
-                                 f'  观影时长 | {formatted_time}\n'
+                        formatted_time = await convert_s(int(play_record[1]))
+                        page_data += f'{medal}**第{cn2an.an2cn(rank)}名** | [{emby_name}](https://www.google.com/search?q={tg})\n' \
+                                     f'  观影时长 | {formatted_time}\n'
 
-                page_data += f'\n#UPlaysRank {datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")}'
-                pages_data.append(page_data)
+                    page_data += f'\n#UPlaysRank {datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")}'
+                    pages_data.append(page_data)
 
-            return pages_data, total_pages, leaderboard_data
+                return pages_data, total_pages, leaderboard_data
+
+        return await _async_ttl_cache(f"users_playback_list_{days}", 120, _fetch)
 
     @staticmethod
     async def user_plays_rank(days=7, uplays=True):

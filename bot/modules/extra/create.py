@@ -78,8 +78,8 @@ async def urm_user(_, msg):
             await reply.edit(
                 f'🎯 done，管理员 [{msg.from_user.first_name}](tg://user?id={msg.from_user.id})\n'
                 f'您对Emby账户 {e.name} 的删除操作已完成。')
-        except:
-            pass
+        except Exception as ex:
+            LOGGER.warning(f"删除 emby 账户后通知失败: {ex}")
         LOGGER.info(
             f"【admin】：管理员 {msg.from_user.first_name} 成功执行删除 emby 账户 {e.name}")
     else:

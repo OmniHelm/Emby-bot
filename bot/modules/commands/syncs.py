@@ -26,47 +26,78 @@ from bot.func_helper.emby import emby
 from bot.func_helper.filters import admins_on_filter
 from bot.func_helper.utils import tem_deluser, split_long_message
 from bot.sql_helper.sql_emby import get_all_emby, Emby, sql_get_emby, sql_update_embys, sql_delete_emby, sql_update_emby
-from bot.func_helper.msg_utils import deleteMessage, sendMessage, sendPhoto
+from bot.func_helper.msg_utils import deleteMessage, sendMessage, sendPhoto, editMessage
 from bot.sql_helper.sql_emby2 import sql_get_emby2
 from bot.sql_helper.sql_favorites import sql_update_favorites, EmbyFavorites
+
+# 导入优化模块
+from bot.func_helper.message_formatter import ProgressTracker, MessageFormatter
+from bot.constants.messages import Messages
 
 
 @bot.on_message(filters.command('syncgroupm', prefixes) & admins_on_filter)
 async def sync_emby_group(_, msg):
+    """群组成员同步任务 - 带进度追踪"""
     await deleteMessage(msg)
     try:
         confirm_delete = msg.command[1]
-    except:
+    except IndexError:
         return await sendMessage(msg,
                                  '⚠️ 注意: 此操作将删除所有未在群组的Emby账户, 如确定使用请输入 `/syncgroupm true`')
+
     if confirm_delete == 'true':
-        send = await sendPhoto(msg, photo=bot_photo, caption="⚡群组成员同步任务\n  **正在开启中...消灭未在群组的账户**",
-                            send=True)
         sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
         LOGGER.info(f"{sign_name} 执行了群组成员同步任务")
-        # 减少api调用
-        members = [member.user.id async for member in bot.get_chat_members(group[0])]
-        r = get_all_emby(Emby.lv == 'b')
-        if not r:
-            return await send.edit("⚡群组同步任务\n\n结束！搞毛，没有人。")
-        a = b = 0
-        text = ''
+
+        # 创建进度追踪器
+        tracker = ProgressTracker(3, "群组成员同步")
+        tracker.add_step("获取群组成员列表")
+        tracker.add_step("检查数据库用户")
+        tracker.add_step("处理不在群组的用户")
+
+        send = await sendMessage(msg, tracker.format_progress(), send=True)
         start = time.perf_counter()
+
+        # 步骤 1: 获取群组成员
+        tracker.next_step()
+        await editMessage(send, tracker.format_progress("正在获取群组成员..."))
+        members = [member.user.id async for member in bot.get_chat_members(group[0])]
+
+        # 步骤 2: 获取数据库用户
+        tracker.next_step()
+        await editMessage(send, tracker.format_progress(f"找到 {len(members)} 个群组成员\n正在检查数据库..."))
+        r = get_all_emby(Emby.lv == 'b')
+
+        if not r:
+            return await editMessage(send, "⚡群组同步任务\n\n结束！数据库中没有用户。")
+
+        total = len(r)
+        await editMessage(send, tracker.format_progress(f"找到 {total} 个数据库用户\n准备处理..."))
+
+        # 步骤 3: 处理不在群组的用户
+        tracker.next_step()
+        deleted_count = 0
+        processed = 0
+        text = ''
+        update_interval = max(1, total // 10)  # 每处理 10% 更新一次
+
         for i in r:
-            b += 1
+            processed += 1
+
             if i.tg not in members:
                 if await emby.emby_del(emby_id=i.embyid):
-                    sql_update_emby(Emby.embyid == i.embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None,
-                                    ex=None)
+                    sql_update_emby(Emby.embyid == i.embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
                     tem_deluser()
-                    a += 1
-                    reply_text = f'{b}. #id{i.tg} - [{i.name}](tg://user?id={i.tg}) 删除\n'
+                    deleted_count += 1
+                    reply_text = f'{deleted_count}. #id{i.tg} - [{i.name}](tg://user?id={i.tg}) 删除\n'
                     LOGGER.info(reply_text)
                     sql_delete_emby(tg=i.tg)
                 else:
-                    reply_text = f'{b}. #id{i.tg} - [{i.name}](tg://user?id={i.tg}) 删除错误\n'
+                    reply_text = f'#id{i.tg} - [{i.name}](tg://user?id={i.tg}) 删除错误\n'
                     LOGGER.error(reply_text)
+
                 text += reply_text
+
                 try:
                     await bot.send_message(i.tg, reply_text)
                 except FloodWait as f:
@@ -76,76 +107,154 @@ async def sync_emby_group(_, msg):
                 except Exception as e:
                     LOGGER.error(e)
 
-        # 防止触发 MESSAGE_TOO_LONG 异常，text可以是4096，caption为1024，取小会使界面好看些
-        n = 1000
-        chunks = [text[i:i + n] for i in range(0, len(text), n)]
-        for c in chunks:
-            await sendMessage(msg, c + f'\n🔈 当前时间：{datetime.now().strftime("%Y-%m-%d")}')
+            # 定期更新进度
+            if processed % update_interval == 0 or processed == total:
+                progress_pct = int((processed / total) * 100)
+                await editMessage(
+                    send,
+                    tracker.format_progress(
+                        f"已检查 {processed}/{total} 个用户 ({progress_pct}%)\n"
+                        f"发现 {deleted_count} 个不在群组\n"
+                        f"已删除账户"
+                    )
+                )
+
+        # 发送详细结果
+        if text:
+            chunks = [text[i:i + 1000] for i in range(0, len(text), 1000)]
+            for c in chunks:
+                await sendMessage(msg, c + f'\n🔈 当前时间：{datetime.now().strftime("%Y-%m-%d")}')
+
+        # 完成总结
         end = time.perf_counter()
         times = end - start
-        if a != 0:
-            await sendMessage(msg,
-                            text=f"**⚡群组成员同步任务 结束！**\n  共检索出 {b} 个账户，处刑 {a} 个账户，耗时：{times:.3f}s")
-        else:
-            await sendMessage(msg, text="** 群组成员同步任务 结束！没人偷跑~**")
-        LOGGER.info(f"【群组同步任务结束】 - {sign_name} 共检索出 {b} 个账户，处刑 {a} 个账户，耗时：{times:.3f}s")
+
+        summary = f"""
+✅ **群组成员同步任务完成**
+
+📊 **统计结果：**
+• 总用户数：{total}
+• 在群组中：{total - deleted_count}
+• 不在群组：{deleted_count}
+• 已删除账户：{deleted_count}
+
+⏱ **耗时：** {times:.2f}秒
+🕐 **完成时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+
+        await sendMessage(msg, summary)
+        LOGGER.info(f"【群组同步任务结束】 - {sign_name} 共检索出 {total} 个账户，处刑 {deleted_count} 个账户，耗时：{times:.3f}s")
 
 
 @bot.on_message(filters.command('syncunbound', prefixes) & admins_on_filter)
 async def sync_emby_unbound(_, msg):
+    """扫描未绑定Bot任务 - 带进度追踪"""
     await deleteMessage(msg)
-    send = await sendPhoto(msg, photo=bot_photo, caption="⚡扫描未绑定Bot任务\n  **正在开启中...消灭扫描bot的emby账户**",
-                           send=True)
     sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
     LOGGER.info(f"{sign_name} 执行了扫描未绑定Bot任务")
+
     confirm_delete = False
     try:
         confirm_delete = msg.command[1]
-    except:
-        pass
+    except IndexError:
+        confirm_delete = False
 
-    a = b = 0
-    text = ''
+    # 创建进度追踪器
+    tracker = ProgressTracker(2, "扫描未绑定账户")
+    tracker.add_step("获取 Emby 用户列表")
+    tracker.add_step("检查绑定状态")
+
+    send = await sendMessage(msg, tracker.format_progress(), send=True)
     start = time.perf_counter()
+
+    # 步骤 1: 获取 Emby 用户
+    tracker.next_step()
+    await editMessage(send, tracker.format_progress("正在连接 Emby 服务器..."))
+
     success, alluser = await emby.users()
     if not success or alluser is None:
-        return await send.edit("⚡扫描未绑定Bot任务结束\n\n结束！搞毛，emby库中一个人都没有。")
+        return await editMessage(send, "⚡扫描未绑定Bot任务\n\n结束！获取 Emby 用户列表失败。")
 
-    if success:
-        for v in alluser:
-            b += 1
-            try:
-                # 消灭不是管理员的账号
-                if v['Policy'] and not bool(v['Policy']['IsAdministrator']):
-                    embyid = v['Id']
-                    # 查询无异常，并且无sql记录
-                    e = sql_get_emby(embyid)
-                    if e is None:
-                        e1 = sql_get_emby2(name=embyid)
-                        if e1 is None:
-                            a += 1
-                            if confirm_delete:
-                                await emby.emby_del(emby_id=embyid)
-                                text += f"🎯 #{v['Name']} 未绑定bot，删除\n"
-                            else:
-                                text += f"🎯 #{v['Name']} 未绑定bot\n"
-            except Exception as e:
-                LOGGER.warning(e)
-        # 防止触发 MESSAGE_TOO_LONG 异常
-        n = 1000
-        chunks = [text[i:i + n] for i in range(0, len(text), n)]
+    total = len(alluser)
+    await editMessage(send, tracker.format_progress(f"找到 {total} 个 Emby 用户\n准备检查..."))
+
+    # 步骤 2: 检查绑定状态
+    tracker.next_step()
+    unbound_count = 0
+    processed = 0
+    text = ''
+    update_interval = max(1, total // 10)
+
+    for v in alluser:
+        processed += 1
+
+        try:
+            # 跳过管理员账号
+            if v['Policy'] and not bool(v['Policy']['IsAdministrator']):
+                embyid = v['Id']
+                # 查询无异常，并且无sql记录
+                e = sql_get_emby(embyid)
+                if e is None:
+                    e1 = sql_get_emby2(name=embyid)
+                    if e1 is None:
+                        unbound_count += 1
+                        if confirm_delete:
+                            await emby.emby_del(emby_id=embyid)
+                            text += f"🎯 #{v['Name']} 未绑定bot，已删除\n"
+                        else:
+                            text += f"🎯 #{v['Name']} 未绑定bot\n"
+        except Exception as e:
+            LOGGER.warning(e)
+
+        # 定期更新进度
+        if processed % update_interval == 0 or processed == total:
+            progress_pct = int((processed / total) * 100)
+            await editMessage(
+                send,
+                tracker.format_progress(
+                    f"已检查 {processed}/{total} 个用户 ({progress_pct}%)\n"
+                    f"发现 {unbound_count} 个未绑定账户"
+                )
+            )
+
+    # 发送详细结果
+    if text:
+        chunks = [text[i:i + 1000] for i in range(0, len(text), 1000)]
         for c in chunks:
-            await sendMessage(msg, c + f'\n**{datetime.now().strftime("%Y-%m-%d")}**')
+            await sendMessage(msg, c + f'\n🔈 当前时间：{datetime.now().strftime("%Y-%m-%d")}')
+
+    # 完成总结
     end = time.perf_counter()
     times = end - start
-    if a != 0:
-        if confirm_delete:
-            await sendMessage(msg, text=f"⚡扫描未绑定Bot任务 done\n  共检索出 {b} 个账户， {a}个未绑定，耗时：{times:.3f}s，已删除")
-        else:
-            await sendMessage(msg, text=f"⚡扫描未绑定Bot任务 done\n  共检索出 {b} 个账户， {a}个未绑定，耗时：{times:.3f}s，如需删除请输入 `/syncunbound true`")
+
+    if unbound_count > 0:
+        summary = f"""
+{'✅' if confirm_delete else '🔍'} **扫描未绑定Bot任务完成**
+
+📊 **统计结果：**
+• 总用户数：{total}
+• 已绑定：{total - unbound_count}
+• 未绑定：{unbound_count}
+• {'已删除' if confirm_delete else '待处理'}：{unbound_count}
+
+⏱ **耗时：** {times:.2f}秒
+🕐 **完成时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+{'' if confirm_delete else '💡 **提示：** 如需删除这些账户，请使用 `/syncunbound true`'}
+"""
     else:
-        await sendMessage(msg, text=f"**扫描未绑定Bot任务 结束！搞毛，没有人被干掉。**")
-    LOGGER.info(f"{sign_name} 扫描未绑定Bot任务结束，共检索出 {b} 个账户， {a}个未绑定，耗时：{times:.3f}s")
+        summary = f"""
+✅ **扫描未绑定Bot任务完成**
+
+📊 **统计结果：**
+• 总用户数：{total}
+• 所有账户均已绑定
+
+⏱ **耗时：** {times:.2f}秒
+"""
+
+    await sendMessage(msg, summary)
+    LOGGER.info(f"{sign_name} 扫描未绑定Bot任务结束，共检索出 {total} 个账户，{unbound_count}个未绑定，耗时：{times:.3f}s")
 
 
 @bot.on_message(filters.command('bindall_id', prefixes) & filters.user(owner))
@@ -175,10 +284,9 @@ async def bindall_id(_, msg):
     if sql_update_embys(some_list=ls, method='bind'):
         # 更新收藏记录
         for i in ls:
-           favorites_updated = sql_update_favorites(condition=EmbyFavorites.embyname == i[1], embyid=i[2])
-           if not favorites_updated:
-               LOGGER.warning(f"用户 {i[1]} 的收藏记录更新失败，可能存在数据冲突")
-               pass
+            favorites_updated = sql_update_favorites(condition=EmbyFavorites.embyname == i[1], embyid=i[2])
+            if not favorites_updated:
+                LOGGER.warning(f"用户 {i[1]} 的收藏记录更新失败，可能存在数据冲突")
         end = time.perf_counter()
         times = end - start
         n = 1000
@@ -210,7 +318,7 @@ async def clear_deleted_account(_, msg):
     await deleteMessage(msg)
     try:
         confirm_delete = msg.command[1]
-    except:
+    except IndexError:
         return await sendMessage(msg,
                                  '⚠️ 注意: 此操作将清理所有注销用户, 如确定使用请输入 `/deleted true`')
     
@@ -242,13 +350,13 @@ async def kick_not_emby(_, msg):
     await deleteMessage(msg)
     try:
         open_kick = msg.command[1]
-    except:
+    except IndexError:
         return await sendMessage(msg,
                                  '注意: 此操作会将 当前群组中无emby账户的选手kick, 如确定使用请输入 `/kick_not_emby true`')
     if open_kick == 'true':
         sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
         LOGGER.info(f"{sign_name} 执行了踢出非emby用户的操作")
-        embyusers = get_all_emby(Emby.embyid is not None and Emby.embyid != '')
+        embyusers = get_all_emby(Emby.embyid.isnot(None) if hasattr(Emby.embyid, "isnot") else Emby.embyid != None)
         # get tgid
         embytgs = []
         if embyusers:
@@ -263,20 +371,19 @@ async def kick_not_emby(_, msg):
                     LOGGER.info(f"{cmember} 已踢出")
                 except Exception as e:
                     LOGGER.info(f"踢出 {cmember} 失败，原因: {e}")
-                    pass
 @bot.on_message(filters.command('restore_from_db', prefixes) & filters.user(owner))
 async def restore_from_db(_, msg):
     await deleteMessage(msg)
     try:
         confirm_restore = msg.command[1]
-    except:
+    except IndexError:
         return await sendMessage(msg,
                                  '注意: 此操作会将 从数据库中恢复用户到Emby中, 请在需要恢复的群组中执行此命令, 如确定使用请输入 `/restore_from_db true`')
     if confirm_restore == 'true':
         sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'    
         LOGGER.info(
             f"{sign_name} 执行了从数据库中恢复用户到Emby中的操作")
-        embyusers = get_all_emby(Emby.embyid is not None and Emby.embyid != '')
+        embyusers = get_all_emby(Emby.embyid.isnot(None) if hasattr(Emby.embyid, "isnot") else Emby.embyid != None)
         group_id = group[0]
         # 获取当前执行命令的群组成员
         chat_members = [member.user.id async for member in bot.get_chat_members(chat_id=group_id)]
@@ -318,7 +425,6 @@ async def restore_from_db(_, msg):
                 except Exception as e:
                     text += f'**- ❎ 恢复 #id{embyuser.tg} - [{embyuser.name}](tg://user?id={embyuser.tg}) 失败 \n**'
                     LOGGER.info(f"恢复 #id{embyuser.tg} - [{embyuser.name}](tg://user?id={embyuser.tg}) 失败，原因: {e}")
-                    pass
         # 防止触发 MESSAGE_TOO_LONG 异常，text可以是4096，caption为1024，取小会使界面好看些
         n = 1000
         chunks = [text[i:i + n] for i in range(0, len(text), n)]
@@ -336,7 +442,7 @@ async def scan_embyname(_, msg):
         f"{sign_name} 执行了扫描重复用户名操作")
 
     # 获取所有有效的emby用户
-    emby_users = get_all_emby(Emby.name is not None)
+    emby_users = get_all_emby(Emby.name.isnot(None) if hasattr(Emby.name, "isnot") else Emby.name != None)
     if not emby_users:
         return await send.edit("⚡扫描重复用户名任务\n\n结束！数据库中没有用户。")
 
@@ -379,7 +485,7 @@ async def unban_all_users(_, msg):
     await deleteMessage(msg)
     try:
         confirm_unban = msg.command[1]
-    except:
+    except IndexError:
         return await sendMessage(msg,
                                  '⚠️ 注意: 此操作将解除所有用户的禁用状态, 如确定使用请输入 `/unbanall true`')
     
@@ -393,7 +499,7 @@ async def unban_all_users(_, msg):
         success, allusers = await emby.users()
         if not success or allusers is None:
             return await send.edit("⚡解除禁用任务\n\n结束！获取 Emby 用户列表失败。")
-        allusers_in_db = get_all_emby(Emby.name is not None)
+        allusers_in_db = get_all_emby(Emby.name.isnot(None) if hasattr(Emby.name, "isnot") else Emby.name != None)
         
         unban_user_in_bot_count = unban_user_in_emby_count = index = 0
         text = ''
@@ -469,7 +575,7 @@ async def ban_all_users(_, msg):
     await deleteMessage(msg)
     try:
         confirm_ban = msg.command[1]
-    except:
+    except IndexError:
         return await sendMessage(msg,
                                  '⚠️ 注意: 此操作将禁用所有用户, 如确定使用请输入 `/banall true`')
     
@@ -483,7 +589,7 @@ async def ban_all_users(_, msg):
         success, allusers = await emby.users()
         if not success or allusers is None:
             return await send.edit("⚡禁用所有用户任务\n\n结束！获取 Emby 用户列表失败。")
-        allusers_in_db = get_all_emby(Emby.name is not None)
+        allusers_in_db = get_all_emby(Emby.name.isnot(None) if hasattr(Emby.name, "isnot") else Emby.name != None)
         ban_user_in_bot_count = ban_user_in_emby_count = index = 0
         text = ''
         start = time.perf_counter()
@@ -556,7 +662,7 @@ async def delete_all_users(_, msg):
     await deleteMessage(msg)
     try:
         confirm_delete = msg.command[1]
-    except:
+    except IndexError:
         return await sendMessage(msg,
                                  '⚠️ 注意: 是否跑路，删除所有账户！！！！, 如确定使用请输入 `/paolu true`')
     
@@ -570,7 +676,7 @@ async def delete_all_users(_, msg):
         success, allusers = await emby.users()
         if not success or allusers is None:
             return await send.edit("⚡跑路命令任务\n\n结束！获取 Emby 用户列表失败。")
-        allusers_in_db = get_all_emby(Emby.name is not None)
+        allusers_in_db = get_all_emby(Emby.name.isnot(None) if hasattr(Emby.name, "isnot") else Emby.name != None)
         
         delete_user_in_emby_count = delete_user_in_bot_count = index = 0
         text = ''

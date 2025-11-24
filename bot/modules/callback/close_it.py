@@ -15,8 +15,8 @@ async def close_it(_, call):
     else:
         try:
             t = int(call.data.split('_')[1])
-        except:
-            pass
+        except (IndexError, ValueError):
+            t = None
         else:
             if t == call.from_user.id:
                 return await deleteMessage(call)

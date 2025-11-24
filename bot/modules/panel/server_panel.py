@@ -27,7 +27,7 @@ async def server(_, call):
             return
 
         keyboard, sever = await cr_page_server()
-        server_info = sever[0]['server'] if sever == '' else ''
+        server_info = sever[0]['server'] if sever else ''
     else:
         keyboard, sever = await cr_page_server()
         server_info = ''.join([item['server'] for item in sever if item['id'] == j])

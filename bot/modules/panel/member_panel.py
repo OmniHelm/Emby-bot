@@ -26,14 +26,20 @@ from bot.sql_helper.sql_code import sql_count_c_code
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby, sql_delete_emby
 from bot.sql_helper.sql_emby2 import sql_get_emby2, sql_delete_emby2
 
+# 导入新的优化模块
+from bot.constants.messages import Messages, ErrorMessages
+from bot.func_helper.validators import Validators
+from bot.func_helper.message_formatter import MessageFormatter, ProgressTracker
+
 # 添加全局锁
 _create_user_lock = asyncio.Lock()
 
 # 创号函数
 async def create_user(_, call, us, stats):
+    # 使用新的消息模板
     msg = await ask_return(call,
-                           text='🤖**注意：您已进入注册状态:\n\n• 请在2min内输入 `[用户名][空格][安全码]`\n• 举个例子🌰：`苏苏 1234`**\n\n• 用户名中不限制中/英文/emoji，🚫**特殊字符**'
-                                '\n• 安全码为敏感操作时附加验证，请填入最熟悉的数字4~6位；退出请点 /cancel', timer=120,
+                           text=Messages.ACCOUNT_CREATE_START.format(timeout=120),
+                           timer=120,
                            button=close_it_ikb)
     if not msg:
         return
@@ -41,60 +47,115 @@ async def create_user(_, call, us, stats):
     elif msg.text == '/cancel':
         return await asyncio.gather(msg.delete(), bot.delete_messages(msg.from_user.id, msg.id - 1))
 
-    try:
-        emby_name, emby_pwd2 = msg.text.split()
-    except (IndexError, ValueError):
-        await msg.reply(f'⚠️ 输入格式错误\n\n`{msg.text}`\n **会话已结束！**')
+    # 使用验证器解析和验证输入
+    emby_name, emby_pwd2, error = Validators.parse_username_pin(msg.text)
+
+    if error:
+        # 使用优化后的错误提示，转义用户输入防止 Markdown 注入
+        escaped_input = Validators.escape_markdown(msg.text)
+        error_msg = Messages.ERROR_INVALID_FORMAT.format(
+            input=escaped_input,
+            correct_format="`用户名 安全码`",
+            example="`苏苏 1234`"
+        )
+        await msg.reply(error_msg)
+        return
     else:
         # 使用锁保护检查和创建过程
         async with _create_user_lock:
             # 再次检查限制（双重检查）
             if _open.tem >= _open.all_user:
                 return await msg.reply(f'**🚫 很抱歉，注册总数({_open.tem})已达限制({_open.all_user})。**')
-            
-            send = await msg.reply(
-                f'🆗 会话结束，收到设置\n\n用户名：**{emby_name}**  安全码：**{emby_pwd2}** \n\n__正在为您初始化账户，更新用户策略__......')
-            
+
+            # 使用进度追踪器
+            tracker = ProgressTracker(4, "创建账户")
+            tracker.add_step("验证输入信息")
+            tracker.add_step("连接 Emby 服务器")
+            tracker.add_step("创建用户账户")
+            tracker.add_step("配置用户权限")
+
+            # 步骤1：验证通过
+            tracker.next_step()
+            send = await msg.reply(tracker.format_progress(
+                f"用户名：**{emby_name}**  安全码：**{emby_pwd2}**"
+            ))
+
+            # 步骤2：连接服务器
+            tracker.next_step()
+            await editMessage(send, tracker.format_progress("正在连接..."))
+
+            # 步骤3：创建账户
+            tracker.next_step()
+            await editMessage(send, tracker.format_progress("正在创建..."))
+
             # emby api操作
             data = await emby.emby_create(name=emby_name, days=us)
             if not data:
-                await editMessage(send,
-                                  '**- ❎ 已有此账户名，请重新输入注册\n- ❎ 或检查有无特殊字符\n- ❎ 或emby服务器连接不通，会话已结束！**',
-                                  re_create_ikb)
+                # 使用优化的错误消息
+                error_text = ErrorMessages.create_failed("username_exists")
+                await editMessage(send, error_text, re_create_ikb)
                 LOGGER.error("【创建账户】：重复账户 or 未知错误！")
             else:
+                # 步骤4：配置权限
+                tracker.next_step()
+                await editMessage(send, tracker.format_progress("正在配置权限..."))
+
                 # 创建成功后立即更新计数器
                 tg = call.from_user.id
                 pwd = data[1]
                 eid = data[0]
                 ex = data[2]
-                
+
                 # 数据库操作
                 if stats:
-                    sql_update_emby(Emby.tg == tg, embyid=eid, name=emby_name, pwd=pwd, pwd2=emby_pwd2, lv='b', cr=datetime.now(), ex=ex) 
+                    sql_update_emby(Emby.tg == tg, embyid=eid, name=emby_name, pwd=pwd, pwd2=emby_pwd2, lv='b', cr=datetime.now(), ex=ex)
                 else:
                     sql_update_emby(Emby.tg == tg, embyid=eid, name=emby_name, pwd=pwd, pwd2=emby_pwd2, lv='b', cr=datetime.now(), ex=ex, us=0)
-                
+
                 # 在锁内更新计数器
                 tem_adduser()
-                
+
+                # 格式化到期时间
                 if schedall.check_ex:
-                    ex = ex.strftime("%Y-%m-%d %H:%M:%S")
+                    expiry_text = MessageFormatter.format_expiry_time(ex)
                 elif schedall.low_activity:
-                    ex = f'__若{config.activity_check_days}天无观看将封禁__'
+                    expiry_text = f'__若{config.activity_check_days}天无观看将封禁__'
                 else:
-                    ex = '__无需保号，放心食用__'
-                    
-                await editMessage(send,
-                                  f'**▎创建用户成功🎉**\n\n'
-                                  f'· 用户名称 | `{emby_name}`\n'
-                                  f'· 用户密码 | `{pwd}`\n'
-                                  f'· 安全密码 | `{emby_pwd2}`（仅发送一次）\n'
-                                  f'· 到期时间 | `{ex}`\n'
-                                  f'· 当前线路：\n'
-                                  f'{emby_line}\n\n'
-                                  f'**·【服务器】 - 查看线路和密码**')
-                
+                    expiry_text = '__无需保号，放心食用__'
+
+                # 使用优化的成功消息（保留原有格式但更清晰）
+                success_text = f"""
+🎉 **账户创建成功！**
+
+╭─────────────────╮
+│  📺 **账户信息**
+╰─────────────────╯
+
+👤 **用户名**
+   `{emby_name}`
+
+🔑 **密码**
+   `{pwd}`
+
+🔐 **安全码**
+   `{emby_pwd2}` （仅显示一次，请妥善保管）
+
+📅 **到期时间**
+   {expiry_text}
+
+🌐 **服务器线路**
+{emby_line}
+
+---
+
+💡 **下一步：**
+使用上述信息登录 Emby 客户端开始使用
+
+📱 **查看线路和密码：** 点击【服务器】按钮
+"""
+
+                await editMessage(send, success_text)
+
                 LOGGER.info(f"【创建账户】[开注状态]：{call.from_user.id} - 建立了 {emby_name} ") if stats else LOGGER.info(
                     f"【创建账户】：{call.from_user.id} - 建立了 {emby_name} ")
 
@@ -104,15 +165,43 @@ async def create_user(_, call, us, stats):
 async def members(_, call):
     data = await members_info(tg=call.from_user.id)
     if not data:
-        return await callAnswer(call, '⚠️ 数据库没有你，请重新 /start录入', True)
+        # 使用优化的错误消息
+        return await callAnswer(call, Messages.ERROR_NOT_IN_DATABASE, True)
+
     await callAnswer(call, f"✅ 用户界面")
     name, lv, ex, us, embyid, pwd2 = data
-    text = f"▎__欢迎进入用户面板！{call.from_user.first_name}__\n\n" \
-           f"**· 🆔 用户のID** | `{call.from_user.id}`\n" \
-           f"**· 📊 当前状态** | {lv}\n" \
-           f"**· 🍒 积分{sakura_b}** | {us}\n" \
-           f"**· 💠 账号名称** | [{name}](tg://user?id={call.from_user.id})\n" \
-           f"**· 🚨 到期时间** | {ex}"
+
+    # 使用格式化工具优化显示
+    status_text = MessageFormatter.format_status(lv) if lv in ['a', 'b', 'c', 'd'] else lv
+
+    text = f"""
+╭─────────────────╮
+│  👤 **用户面板**
+╰─────────────────╯
+
+欢迎，{call.from_user.first_name}！
+
+**基本信息：**
+• 🆔 **Telegram ID**
+  `{call.from_user.id}`
+
+• 📊 **账户状态**
+  {status_text}
+
+• 🍒 **持有{sakura_b}**
+  {us}
+
+• 💠 **Emby 账户**
+  {MessageFormatter.format_code_block(name) if name else '未创建'}
+
+• 🚨 **到期时间**
+  {ex if ex else '未设置'}
+
+---
+
+请选择下方操作
+"""
+
     if not embyid:
         is_admin = judge_admins(call.from_user.id)
         await editMessage(call, text, members_ikb(is_admin, False))

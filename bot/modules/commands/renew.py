@@ -50,7 +50,8 @@ async def renew_user(_, msg):
     reply = await msg.reply(f"🍓 正在处理ing···/·")
     try:
         name = f'[{e.name}]({e.tg})' if e.tg else e.name
-    except:
+    except Exception as ex:
+        LOGGER.warning(f"解析用户名称失败: {ex}")
         name = e.name
     # 时间是 utc 来算的
     Now = datetime.now()
@@ -80,8 +81,8 @@ async def renew_user(_, msg):
         f'\n📅 实时到期：{ex_new.strftime("%Y-%m-%d %H:%M:%S")}')
     try:
         await i.forward(e.tg)
-    except:
-        pass
+    except Exception as ex:
+        LOGGER.warning(f"转发续期通知失败 tg={e.tg}: {ex}")
 
     LOGGER.info(
         f"【admin】[renew]：{gm_name} 对 emby账户 {name} 调节 {days} 天，"

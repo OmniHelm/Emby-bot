@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from bot import emby_url, emby_api, emby_block, extra_emby_libs, LOGGER
 from bot.sql_helper.sql_emby import sql_update_emby, Emby
-from bot.func_helper.utils import pwd_create, convert_runtime, cache, Singleton
+from bot.func_helper.utils import pwd_create, convert_runtime, cache, Singleton, _async_ttl_cache
 
 
 def create_policy(admin=False, disable=False, limit: int = 2, block: list = None):
@@ -574,27 +574,29 @@ class Embyservice(metaclass=Singleton):
             enable_all_folders=False
         )
 
-    @cache.memoize(ttl=120)
     async def get_current_playing_count(self) -> int:
         """
         获取当前播放用户数量
         :return: 播放用户数量
         """
-        try:
-            result = await self._request('GET', '/emby/Sessions')
-            if result.success and result.data:
-                count = 0
-                for session in result.data:
-                    if session.get("NowPlayingItem"):
-                        count += 1
-                LOGGER.debug(f"当前播放用户数: {count}")
-                return count
-            else:
-                LOGGER.error(f"获取播放数量失败: {result.error}")
+        async def _fetch():
+            try:
+                result = await self._request('GET', '/emby/Sessions')
+                if result.success and result.data:
+                    count = 0
+                    for session in result.data:
+                        if session.get("NowPlayingItem"):
+                            count += 1
+                    LOGGER.debug(f"当前播放用户数: {count}")
+                    return count
+                else:
+                    LOGGER.error(f"获取播放数量失败: {result.error}")
+                    return -1
+            except Exception as e:
+                LOGGER.error(f"获取播放数量异常: {str(e)}")
                 return -1
-        except Exception as e:
-            LOGGER.error(f"获取播放数量异常: {str(e)}")
-            return -1
+
+        return await _async_ttl_cache("get_current_playing_count", 120, _fetch)
 
     async def terminate_session(self, session_id: str, reason: str = "Unauthorized client detected") -> bool:
         """

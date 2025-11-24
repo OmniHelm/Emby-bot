@@ -12,7 +12,7 @@ from bot.func_helper.emby import emby
 async def embylibs_blockall(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply(f"🍓 正在处理ing····, 正在更新所有用户的媒体库访问权限")
-    rst = get_all_emby(Emby.embyid is not None)
+    rst = get_all_emby(Emby.embyid.isnot(None))
     if rst is None:
         LOGGER.info(
             f"【关闭媒体库任务】 -{msg.from_user.first_name}({msg.from_user.id}) 没有检测到任何emby账户，结束")
@@ -55,7 +55,7 @@ async def embylibs_blockall(_, msg):
 async def embylibs_unblockall(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply(f"🍓 正在处理ing····, 正在更新所有用户的媒体库访问权限")
-    rst = get_all_emby(Emby.embyid is not None)
+    rst = get_all_emby(Emby.embyid.isnot(None))
     if rst is None:
         LOGGER.info(
             f"【开启媒体库任务】 -{msg.from_user.first_name}({msg.from_user.id}) 没有检测到任何emby账户，结束")
@@ -98,7 +98,7 @@ async def extraembylibs_blockall(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply(f"🍓 正在处理ing····, 正在更新所有用户的额外媒体库访问权限")
 
-    rst = get_all_emby(Emby.embyid is not None)
+    rst = get_all_emby(Emby.embyid.isnot(None))
     if rst is None:
         LOGGER.info(
             f"【关闭额外媒体库任务】 -{msg.from_user.first_name}({msg.from_user.id}) 没有检测到任何emby账户，结束")
@@ -143,7 +143,7 @@ async def extraembylibs_unblockall(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply(f"🍓 正在处理ing····, 正在更新所有用户的额外媒体库访问权限")
 
-    rst = get_all_emby(Emby.embyid is not None)
+    rst = get_all_emby(Emby.embyid.isnot(None))
     if rst is None:
         LOGGER.info(
             f"【开启额外媒体库任务】 -{msg.from_user.first_name}({msg.from_user.id}) 没有检测到任何emby账户，结束")

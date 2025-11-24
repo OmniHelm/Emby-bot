@@ -1,8 +1,8 @@
-import requests
 import json
 from bot import LOGGER, moviepilot, save_config
 import aiohttp
 import asyncio
+from typing import Optional
 
 # 添加配置类
 class MoviePilot:
@@ -15,6 +15,28 @@ class MoviePilot:
 mp = MoviePilot()
 
 TIMEOUT = 30
+_session: Optional[aiohttp.ClientSession] = None
+_session_lock = asyncio.Lock()
+
+
+async def _get_session() -> aiohttp.ClientSession:
+    """获取或创建共享的 aiohttp 会话，避免重复建连"""
+    global _session
+    if _session is None or _session.closed:
+        async with _session_lock:
+            if _session is None or _session.closed:
+                connector = aiohttp.TCPConnector(limit=30, limit_per_host=10, enable_cleanup_closed=True)
+                timeout = aiohttp.ClientTimeout(total=TIMEOUT)
+                _session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+    return _session
+
+
+async def close_mp_session():
+    """关闭共享会话，供应用退出时调用"""
+    global _session
+    if _session and not _session.closed:
+        await _session.close()
+    _session = None
 # aiohttp重试装饰器
 def aiohttp_retry(retry_count):
     def decorator(func):
@@ -31,22 +53,31 @@ def aiohttp_retry(retry_count):
     return decorator
 @aiohttp_retry(3)
 async def _do_request(request):
-    async with aiohttp.ClientSession() as session:
-        async with session.request(method=request['method'], url=request['url'], headers=request['headers'], data=request.get('data')) as response:
-            if response.status == 401 or response.status == 403:
-                LOGGER.error("MP Token过期, 尝试重新登录.")
-                success = await login()
-                if success:
-                    request['headers']['Authorization'] = mp.access_token
-                    return await _do_request(request)
-                return None
-            return await response.json()
+    session = await _get_session()
+    async with session.request(method=request['method'], url=request['url'], headers=request['headers'], data=request.get('data')) as response:
+        if response.status == 401 or response.status == 403:
+            LOGGER.error("MP Token过期, 尝试重新登录.")
+            success = await login()
+            if success:
+                request['headers']['Authorization'] = mp.access_token
+                return await _do_request(request)
+            return None
+        return await response.json()
 async def login():
     url = f"{mp.url}/api/v1/login/access-token"
-    payload = f"username={mp.username}&password={mp.password}"
+    payload = {
+        "username": mp.username,
+        "password": mp.password
+    }
     headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-    response = requests.post(url, data=payload, headers=headers, timeout=TIMEOUT)
-    result = response.json()
+    try:
+        session = await _get_session()
+        async with session.post(url, data=payload, headers=headers) as response:
+            result = await response.json()
+    except Exception as e:
+        LOGGER.error(f"MP 登录失败: {e}")
+        return False
+
     if 'access_token' in result:
         mp.access_token = result['token_type'] + ' ' + result['access_token']
         moviepilot.access_token = mp.access_token # 保存到config

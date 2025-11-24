@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 import pytz
 
 from bot import bot, _open, save_config, owner, admins, bot_name, ranks, schedall, group, config
@@ -6,6 +9,21 @@ from bot.sql_helper.sql_emby import sql_get_emby
 from cacheout import Cache
 
 cache = Cache()
+# 简易异步 TTL 缓存，避免 cacheout 与协程不兼容
+_async_cache = {}
+_async_cache_lock = asyncio.Lock()
+
+
+async def _async_ttl_cache(key, ttl, fetcher):
+    now = time.time()
+    async with _async_cache_lock:
+        entry = _async_cache.get(key)
+        if entry and now - entry["ts"] < ttl:
+            return entry["value"]
+    result = await fetcher()
+    async with _async_cache_lock:
+        _async_cache[key] = {"value": result, "ts": time.time()}
+    return result
 
 
 def judge_admins(uid):
@@ -20,7 +38,6 @@ def judge_admins(uid):
         return True
 
 
-# @cache.memoize(ttl=60)
 async def members_info(tg=None, name=None):
     """
     基础资料 - 可传递 tg,emby_name
@@ -204,16 +221,17 @@ def convert_to_beijing_time(original_date):
     return dt
 
 
-@cache.memoize(ttl=300)
 async def get_users():
-    # 创建一个空字典来存储用户的 first_name 和 id
-    members_dict = {}
-    async for member in bot.get_chat_members(group[0]):
-        try:
-            members_dict[member.user.id] = member.user.first_name
-        except Exception as e:
-            print(f'{e} 某名bug {member}')
-    return members_dict
+    async def _fetch():
+        members_dict = {}
+        async for member in bot.get_chat_members(group[0]):
+            try:
+                members_dict[member.user.id] = member.user.first_name
+            except Exception as e:
+                print(f'{e} 某名bug {member}')
+        return members_dict
+
+    return await _async_ttl_cache("get_users", 300, _fetch)
 
 
 def bytes_to_gb(size_in_bytes):

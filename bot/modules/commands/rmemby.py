@@ -1,4 +1,5 @@
 from pyrogram import filters
+from datetime import datetime
 
 from bot import bot, prefixes, LOGGER
 from bot.func_helper.emby import emby
@@ -8,43 +9,99 @@ from bot.func_helper.utils import tem_deluser
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby, sql_delete_emby_by_tg, sql_delete_emby
 from bot.sql_helper.sql_emby2 import sql_get_emby2, sql_delete_emby2_by_name
 
+# 导入优化模块
+from bot.constants.messages import Messages
+from bot.func_helper.message_formatter import MessageFormatter
+
 
 # 删除账号命令
 @bot.on_message(filters.command('rmemby', prefixes) & admins_on_filter)
 async def rmemby_user(_, msg):
     await deleteMessage(msg)
-    reply = await msg.reply("🍉 正在处理ing....")
+    reply = await msg.reply("🔄 正在处理...")
+
+    # 获取目标用户
     if msg.reply_to_message is None:
         try:
-            b = msg.command[1]  # name
+            b = msg.command[1]  # tg_id or username
         except (IndexError, KeyError, ValueError):
-            return await editMessage(reply,
-                                     "🔔 **使用格式：**/rmemby tg_id或回复某人 \n/rmemby [emby用户名亦可]")
+            # 优化：使用标准化的使用说明
+            return await editMessage(reply, Messages.USAGE_RMEMBY)
         e = sql_get_emby(tg=b)
     else:
         b = msg.reply_to_message.from_user.id
         e = sql_get_emby(tg=b)
 
+    # 优化：用户未找到的提示
     if e is None:
-        return await reply.edit(f"♻️ 没有检索到 {b} 账户，请确认重试或手动检查。")
+        error_msg = Messages.ERROR_USER_NOT_FOUND.format(user_id=b)
+        return await reply.edit(error_msg)
 
+    # 检查是否有账户
     if e.embyid is not None:
         first = await bot.get_chat(e.tg)
+
+        # 执行删除
         if await emby.emby_del(emby_id=e.embyid):
             sql_update_emby(Emby.embyid == e.embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
             tem_deluser()
-            sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'[{msg.from_user.first_name}](tg://user?id={msg.from_user.id})'
+
+            # 获取管理员信息
+            sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else MessageFormatter.format_user_link(msg.from_user.id, msg.from_user.first_name)
+
+            # 优化：删除成功消息
+            success_msg = f"""
+✅ **账户删除成功**
+
+**被删除账户：**
+{MessageFormatter.format_user_link(e.tg, first.first_name)}
+
+**账户信息：**
+• 用户名：`{e.name}`
+• Emby ID：`{e.embyid}`
+
+**执行人：**
+{sign_name}
+
+**操作时间：**
+{MessageFormatter.format_time(datetime.now())}
+"""
+
+            # 优化：用户通知消息
+            user_notification = f"""
+📢 **账户删除通知**
+
+你的 Emby 账户已被管理员删除。
+
+**账户信息：**
+• 用户名：`{e.name}`
+
+**删除原因：**
+管理员操作
+
+**执行人：**
+{sign_name}
+
+如有疑问，请联系管理员。
+"""
+
             try:
-                await reply.edit(
-                    f'🎯 done，管理员  {sign_name} 已将 [{first.first_name}](tg://user?id={e.tg}) 账户 {e.name} 删除。')
-                await bot.send_message(e.tg,
-                                       f'🎯 done，管理员 {sign_name} 已将 您的账户 {e.name} 删除。')
-            except:
-                pass
-            LOGGER.info(
-                f"【admin】：管理员 {sign_name} 执行删除 {first.first_name}-{e.tg} 账户 {e.name}")
+                await reply.edit(success_msg)
+                await bot.send_message(e.tg, user_notification)
+            except Exception as ex:
+                LOGGER.warning(f"通知删除账户失败 tg={e.tg}: {ex}")
+
+            LOGGER.info(f"【admin】：管理员 {sign_name} 执行删除 {first.first_name}-{e.tg} 账户 {e.name}")
     else:
-        await reply.edit(f"💢 [ta](tg://user?id={b}) 还没有注册账户呢")
+        # 优化：未注册账户的提示
+        error_msg = f"""
+⚠️ **用户未注册账户**
+
+目标用户：{MessageFormatter.format_user_link(b, "此用户")}
+
+该用户尚未创建 Emby 账户，无需删除。
+"""
+        await reply.edit(error_msg)
 @bot.on_message(filters.command('only_rm_record', prefixes) & admins_on_filter)
 async def only_rm_record(_, msg):
     await deleteMessage(msg)

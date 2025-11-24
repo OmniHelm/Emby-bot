@@ -12,6 +12,7 @@ from sqlalchemy import (
     case,
     func,
 )
+from bot import LOGGER
 from cacheout import Cache
 
 cache = Cache()
@@ -41,8 +42,9 @@ def sql_add_code(code_list: list, tg: int, us: int):
             session.add_all(code_list)
             session.commit()
             return True
-        except:
+        except Exception as e:
             session.rollback()
+            LOGGER.error(f"批量添加注册码失败: {e}")
             return False
 
 
@@ -56,7 +58,7 @@ def sql_update_code(code, used: int, usedtime):
             session.commit()
             return True
         except Exception as e:
-            print(e)
+            LOGGER.error(f"更新注册码失败 {code}: {e}")
             return False
 
 
@@ -65,7 +67,8 @@ def sql_get_code(code):
         try:
             code = session.query(Code).filter(Code.code == code).first()
             return code
-        except:
+        except Exception as e:
+            LOGGER.error(f"查询注册码失败 {code}: {e}")
             return None
 
 
@@ -92,7 +95,7 @@ def sql_count_code(tg: int = None):
                 ]  # 用一个列表推导式来查询数量
                 return used_count, tg_mon, tg_sea, tg_half, tg_year, unused_count
             except Exception as e:
-                print(e)
+                LOGGER.error(f"统计注册码失败: {e}")
                 return None
         else:
             try:
@@ -119,7 +122,7 @@ def sql_count_code(tg: int = None):
                 ]
                 return used_count, tg_mon, tg_sea, tg_half, tg_year, unused_count
             except Exception as e:
-                print(e)
+                LOGGER.error(f"统计用户注册码失败 tg={tg}: {e}")
                 return None
 
 
@@ -210,7 +213,7 @@ def sql_count_p_code(tg_id, us):
             return a, i
         except Exception as e:
             # 查询失败时，打印异常信息，并返回None
-            print(e)
+            LOGGER.error(f"分页查询注册码失败 tg={tg_id} us={us}: {e}")
             return None, 1
 
 
@@ -250,7 +253,7 @@ def sql_count_c_code(tg_id):
             return a, i
         except Exception as e:
             # 查询失败时，打印异常信息，并返回None
-            print(e)
+            LOGGER.error(f"分页查询注册码失败 tg={tg_id}: {e}")
             return None, 1
 
 def sql_delete_unused_by_days(days: list[int], user_id: int = None) -> int:
@@ -265,7 +268,7 @@ def sql_delete_unused_by_days(days: list[int], user_id: int = None) -> int:
             return result
         except Exception as e:
             session.rollback()
-            print(f"删除注册码失败: {e}")
+            LOGGER.error(f"删除注册码失败: {e}")
             return 0
 
 
@@ -280,5 +283,5 @@ def sql_delete_all_unused(user_id: int = None) -> int:
             return result
         except Exception as e:
             session.rollback()
-            print(f"删除所有未使用注册码失败: {e}")
+            LOGGER.error(f"删除所有未使用注册码失败: {e}")
             return 0

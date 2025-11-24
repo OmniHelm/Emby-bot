@@ -239,7 +239,8 @@ async def handle_resource_selection(call, result):
             except ValueError:
                 await editMessage(msg, '❌ 输入错误，请重新输入，退出点 /cancel', buttons=re_download_center_ikb)
                 continue
-            except:
+            except Exception as e:
+                LOGGER.error(f"下载队列处理异常: {e}")
                 await editMessage(msg, '❌ 呜呜呜，出错了', buttons=re_download_center_ikb)
                 return
 

@@ -75,5 +75,5 @@ async def fuxx_pitao(_, msg):
         await msg.chat.ban_member(msg.sender_chat.id)
         LOGGER.info(
             f'【AntiChannel】- {msg.sender_chat.title} - {msg.sender_chat.id} 被封禁')
-    except:
-        pass
+    except Exception as e:
+        LOGGER.error(f"【AntiChannel】处理失败: {e}")

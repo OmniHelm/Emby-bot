@@ -20,44 +20,44 @@ class BotCommands:
         try:
             try:
                 await client.delete_bot_commands(scope=BotCommandScopeAllGroupChats())  # 删除所有群聊指令
-            except:
-                pass
+            except Exception as e:
+                LOGGER.warning(f"删除群聊指令失败: {e}")
             try:
                 await client.delete_bot_commands(scope=BotCommandScopeAllPrivateChats())  # 删除所有私聊命令
-            except:
-                pass
+            except Exception as e:
+                LOGGER.warning(f"删除私聊指令失败: {e}")
             try:
                 await client.set_bot_commands(user_p, scope=BotCommandScopeAllPrivateChats())  # 所有私聊命令
-            except:
-                pass
+            except Exception as e:
+                LOGGER.warning(f"设置私聊用户指令失败: {e}")
             try:
                 await client.set_bot_commands(user_p, scope=BotCommandScopeAllGroupChats())  # 所有群聊命令
-            except:
-                pass
+            except Exception as e:
+                LOGGER.warning(f"设置群聊用户指令失败: {e}")
 
             # 私聊
             for admin_id in admins:
                 try:
                     await client.set_bot_commands(admin_p, scope=BotCommandScopeChat(chat_id=admin_id))
-                except:
-                    pass
+                except Exception as e:
+                    LOGGER.warning(f"设置管理员 {admin_id} 私聊指令失败: {e}")
             try:
                 await client.set_bot_commands(owner_p, scope=BotCommandScopeChat(chat_id=owner))
-            except:
-                pass
+            except Exception as e:
+                LOGGER.warning(f"设置 owner 私聊指令失败: {e}")
             # 群组
             for i in group:
                 for admin_id in admins:
                     try:
                         await client.set_bot_commands(admin_p,
                                                       scope=BotCommandScopeChatMember(chat_id=i, user_id=admin_id))
-                    except:
-                        pass
+                    except Exception as e:
+                        LOGGER.warning(f"设置群 {i} 管理员 {admin_id} 指令失败: {e}")
                 try:
                     await client.set_bot_commands(owner_p,
                                                   scope=BotCommandScopeChatMember(chat_id=i, user_id=owner))
-                except:
-                    pass
+                except Exception as e:
+                    LOGGER.warning(f"设置群 {i} owner 指令失败: {e}")
             LOGGER.info("————初始化 命令显示 done————")
         except ConnectionError as e:
             LOGGER.error(f'命令初始化错误：{e}')
@@ -68,13 +68,13 @@ class BotCommands:
         try:
             try:
                 await client.set_bot_commands(admin_p, scope=BotCommandScopeChat(chat_id=uid))
-            except:
-                pass
+            except Exception as e:
+                LOGGER.warning(f"设置用户 {uid} 私聊管理指令失败: {e}")
             for i in group:
                 try:
                     await client.set_bot_commands(admin_p, scope=BotCommandScopeChatMember(chat_id=i, user_id=uid))
-                except:
-                    pass
+                except Exception as e:
+                    LOGGER.warning(f"设置群 {i} 用户 {uid} 管理指令失败: {e}")
         except Exception as e:
             LOGGER.error(f'提权命令列表设置失败：{e}')
 
@@ -84,13 +84,13 @@ class BotCommands:
         try:
             try:
                 await client.set_bot_commands(user_p, scope=BotCommandScopeChat(chat_id=uid))
-            except:
-                pass
+            except Exception as e:
+                LOGGER.warning(f"恢复用户 {uid} 私聊普通指令失败: {e}")
             for i in group:
                 try:
                     await client.set_bot_commands(user_p, scope=BotCommandScopeChatMember(chat_id=i, user_id=uid))
-                except:
-                    pass
+                except Exception as e:
+                    LOGGER.warning(f"恢复群 {i} 用户 {uid} 普通指令失败: {e}")
         except Exception as e:
             LOGGER.error(f'降权命令列表设置失败：{e}')
 

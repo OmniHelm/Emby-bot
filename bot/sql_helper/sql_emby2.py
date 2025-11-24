@@ -1,6 +1,8 @@
 from bot.sql_helper import Base, Session, engine
 from sqlalchemy import Column, String, DateTime, Integer
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
+from bot import LOGGER
 
 
 class Emby2(Base):
@@ -30,8 +32,15 @@ def sql_add_emby2(embyid, name, cr, ex, pwd='5210', pwd2='1234', lv='b', expired
             emby = Emby2(embyid=embyid, name=name, pwd=pwd, pwd2=pwd2, lv=lv, cr=cr, ex=ex, expired=expired)
             session.add(emby)
             session.commit()
-        except:
-            pass
+            return True
+        except IntegrityError:
+            session.rollback()
+            LOGGER.debug(f"emby2 记录已存在 embyid={embyid}")
+            return False
+        except Exception as e:
+            session.rollback()
+            LOGGER.error(f"添加 emby2 记录失败 embyid={embyid} err={e}")
+            return False
 
 
 def sql_get_emby2(name):
@@ -43,7 +52,8 @@ def sql_get_emby2(name):
             # 使用or_方法来表示或者的逻辑，如果有tg就用tg，如果有embyid就用embyid，如果有name就用name，如果都没有就返回None
             emby = session.query(Emby2).filter(or_(Emby2.name == name, Emby2.embyid == name)).first()
             return emby
-        except:
+        except Exception as e:
+            LOGGER.error(f"查询 emby2 记录失败 name={name} err={e}")
             return None
 
 
@@ -55,7 +65,8 @@ def get_all_emby2(condition):
         try:
             embies = session.query(Emby2).filter(condition).all()
             return embies
-        except:
+        except Exception as e:
+            LOGGER.error(f"查询 emby2 列表失败: {e}")
             return None
 
 
@@ -74,7 +85,9 @@ def sql_update_emby2(condition, **kwargs):
                 setattr(emby, k, v)
             session.commit()
             return True
-        except:
+        except Exception as e:
+            LOGGER.error(f"更新 emby2 记录失败: {e}")
+            session.rollback()
             return False
 
 

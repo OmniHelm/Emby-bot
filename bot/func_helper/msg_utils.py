@@ -133,7 +133,7 @@ async def sendPhoto(message, photo, caption=None, buttons=None, timer=None, send
     except FloodWait as f:
         LOGGER.warning(str(f))
         await sleep(f.value * 1.2)
-        return await sendFile(message, photo, caption, buttons)
+        return await sendPhoto(message, photo, caption, buttons, timer, send, chat_id)
     except Exception as e:
         LOGGER.error(str(e))
         return str(e)
@@ -225,7 +225,8 @@ async def callAsk(callbackquery, text, timer: int = 120, button=None):
     try:
         txt = await callbackquery.message.chat.ask(text, filters=filters.CallbackQuery, timeout=timer, button=button)
         return True
-    except:
+    except Exception as e:
+        LOGGER.error(f"callAsk 失败: {e}")
         return False
 
 

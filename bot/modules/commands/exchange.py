@@ -11,6 +11,10 @@ from bot.sql_helper.sql_code import Code
 from bot.sql_helper.sql_emby import sql_get_emby, Emby
 from bot.sql_helper import Session
 
+# 导入优化模块
+from bot.constants.messages import Messages
+from bot.func_helper.message_formatter import MessageFormatter
+
 
 def is_renew_code(input_string):
     if "Renew" in input_string:
@@ -20,48 +24,130 @@ def is_renew_code(input_string):
 
 
 async def rgs_code(_, msg, register_code):
-    if _open.stat: return await sendMessage(msg, "🤧 自由注册开启下无法使用注册码。")
+    # 移除此检查：续期码应该始终可用，注册码的限制在后面处理
+    # 开放注册时不影响续期码的使用，只影响注册码
 
     data = sql_get_emby(tg=msg.from_user.id)
-    if not data: return await sendMessage(msg, "出错了，不确定您是否有资格使用，请先 /start")
+    if not data:
+        # 优化：使用标准错误消息
+        return await sendMessage(msg, Messages.ERROR_NOT_IN_DATABASE)
+
     embyid = data.embyid
     ex = data.ex
     lv = data.lv
+
     if embyid:
-        if not is_renew_code(register_code): return await sendMessage(msg,
-                                                                      "🔔 很遗憾，您使用的是注册码，无法启用续期功能，请悉知",
-                                                                      timer=60)
+        # 优化：区分注册码和续期码
+        if not is_renew_code(register_code):
+            error_msg = """
+⚠️ **兑换码类型错误**
+
+你使用的是 **注册码**，但你已有账户。
+
+**说明：**
+• 注册码仅用于创建新账户
+• 已有账户请使用续期码延长时间
+
+**如何续期：**
+✅ 使用续期码兑换
+✅ 联系管理员获取续期码
+
+点击 /store 查看可用的续期码
+"""
+            return await sendMessage(msg, error_msg, timer=60)
+
         with Session() as session:
-            # with_for_update 是一个排他锁，其实就不需要悲观锁或者是乐观锁，先锁定先到的数据使其他session无法读取，修改(单独似乎不起作用，也许是不能完全防止并发冲突，于是加入原子操作)
+            # with_for_update 是一个排他锁
             r = session.query(Code).filter(Code.code == register_code).with_for_update().first()
-            if not r: return await sendMessage(msg, "⛔ **你输入了一个错误de续期码，请确认好重试。**", timer=60)
+
+            # 优化：续期码无效的提示
+            if not r:
+                error_msg = Messages.REDEEM_CODE_INVALID.format(code=register_code)
+                return await sendMessage(msg, error_msg, timer=60)
             re = session.query(Code).filter(Code.code == register_code, Code.used.is_(None)).with_for_update().update(
                 {Code.used: msg.from_user.id, Code.usedtime: datetime.now()})
             session.commit()  # 必要的提交。否则失效
             tg1 = r.tg
             us1 = r.us
             used = r.used
-            if re == 0: return await sendMessage(msg,
-                                                 f'此 `{register_code}` \n续期码已被使用,是[{used}](tg://user?id={used})的形状了喔')
+
+            # 优化：续期码已被使用的提示
+            if re == 0:
+                error_msg = f"""
+❌ **续期码已被使用**
+
+兑换码：`{register_code}`
+
+**使用者：**
+{MessageFormatter.format_user_link(used, "此用户")}
+
+**说明：**
+• 每个续期码只能使用一次
+• 此码已被上述用户兑换
+
+**如需续期：**
+✅ 获取新的续期码
+✅ 联系管理员获取帮助
+
+点击 /store 查看可用的续期码
+"""
+                return await sendMessage(msg, error_msg)
+
             session.query(Code).filter(Code.code == register_code).with_for_update().update(
                 {Code.used: msg.from_user.id, Code.usedtime: datetime.now()})
             first = await bot.get_chat(tg1)
+
             # 此处需要写一个判断 now和ex的大小比较。进行日期加减。
             ex_new = datetime.now()
             if ex_new > ex:
+                # 账户已过期，从当前时间开始计算
                 ex_new = ex_new + timedelta(days=us1)
                 await emby.emby_change_policy(emby_id=embyid, disable=False)
                 if lv == 'c':
                     session.query(Emby).filter(Emby.tg == msg.from_user.id).update({Emby.ex: ex_new, Emby.lv: 'b'})
                 else:
                     session.query(Emby).filter(Emby.tg == msg.from_user.id).update({Emby.ex: ex_new})
-                await sendMessage(msg, f'🎊 少年郎，恭喜你，已收到 [{first.first_name}](tg://user?id={tg1}) 的{us1}天🎁\n'
-                                       f'__已解封账户并延长到期时间至(以当前时间计)__\n到期时间：{ex_new.strftime("%Y-%m-%d %H:%M:%S")}')
+
+                # 优化：兑换成功消息（已过期账户）
+                success_msg = f"""
+🎉 **续期成功！**
+
+**获得时长：** {us1} 天
+**来自：** {MessageFormatter.format_user_link(tg1, first.first_name)}
+
+✅ **账户已解封**
+✅ **到期时间已延长**
+
+📅 **新的到期时间**
+   {MessageFormatter.format_time(ex_new)}
+
+   {MessageFormatter.format_days_left(ex_new)}
+
+继续享受服务吧！🎬
+"""
+                await sendMessage(msg, success_msg)
+
             elif ex_new < ex:
+                # 账户未过期，在原到期时间基础上延长
                 ex_new = data.ex + timedelta(days=us1)
                 session.query(Emby).filter(Emby.tg == msg.from_user.id).update({Emby.ex: ex_new})
-                await sendMessage(msg,
-                                  f'🎊 少年郎，恭喜你，已收到 [{first.first_name}](tg://user?id={tg1}) 的{us1}天🎁\n到期时间：{ex_new}__')
+
+                # 优化：兑换成功消息（未过期账户）
+                success_msg = f"""
+🎉 **续期成功！**
+
+**获得时长：** {us1} 天
+**来自：** {MessageFormatter.format_user_link(tg1, first.first_name)}
+
+📅 **新的到期时间**
+   {MessageFormatter.format_time(ex_new)}
+
+   {MessageFormatter.format_days_left(ex_new)}
+
+感谢支持！🎬
+"""
+                await sendMessage(msg, success_msg)
+
             session.commit()
             new_code = register_code[:-7] + "░" * 7
             await sendMessage(msg,

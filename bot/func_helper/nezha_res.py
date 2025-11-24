@@ -1,11 +1,12 @@
 """
 根据哪吒探针项目修改，只是图服务器界面好看。
 """
+import aiohttp
 import humanize as humanize
-import requests as r
+from bot import LOGGER
 
 
-def sever_info(tz, tz_api, tz_id):
+async def sever_info(tz, tz_api, tz_id):
     if not tz or not tz_api or not tz_id: return None
 
     # 请求头
@@ -15,35 +16,38 @@ def sever_info(tz, tz_api, tz_id):
     b = []
     try:
         # 请求地址
-        for x in tz_id:
-            tz_url = f'{tz}/api/v1/server/details?id={x}'
-            # 发送GET请求，获取服务器流量信息
-            res = r.get(tz_url, headers=tz_headers).json()
-            # print(res)
-            detail = res["result"][0]
-            """cpu"""
-            uptime = f'{int(detail["status"]["Uptime"] / 86400)} 天' if detail["status"]["Uptime"] != 0 else '⚠️掉线辣'
-            CPU = f"{detail['status']['CPU']:.2f}"
-            """内存"""
-            MemTotal = humanize.naturalsize(detail['host']['MemTotal'], gnu=True)
-            MemUsed = humanize.naturalsize(detail['status']['MemUsed'], gnu=True)
-            Mempercent = f"{(detail['status']['MemUsed'] / detail['host']['MemTotal']) * 100:.2f}" if detail['host'][
-                                                                                                          'MemTotal'] != 0 else "0"
-            """流量"""
-            NetInTransfer = humanize.naturalsize(detail['status']['NetInTransfer'], gnu=True)
-            NetOutTransfer = humanize.naturalsize(detail['status']['NetOutTransfer'], gnu=True)
-            """网速"""
-            NetInSpeed = humanize.naturalsize(detail['status']['NetInSpeed'], gnu=True)
-            NetOutSpeed = humanize.naturalsize(detail['status']['NetOutSpeed'], gnu=True)
+        async with aiohttp.ClientSession() as session:
+            for x in tz_id:
+                tz_url = f'{tz}/api/v1/server/details?id={x}'
+                # 发送GET请求，获取服务器流量信息
+                async with session.get(tz_url, headers=tz_headers) as response:
+                    res = await response.json()
+                    # print(res)
+                    detail = res["result"][0]
+                    """cpu"""
+                    uptime = f'{int(detail["status"]["Uptime"] / 86400)} 天' if detail["status"]["Uptime"] != 0 else '⚠️掉线辣'
+                    CPU = f"{detail['status']['CPU']:.2f}"
+                    """内存"""
+                    MemTotal = humanize.naturalsize(detail['host']['MemTotal'], gnu=True)
+                    MemUsed = humanize.naturalsize(detail['status']['MemUsed'], gnu=True)
+                    Mempercent = f"{(detail['status']['MemUsed'] / detail['host']['MemTotal']) * 100:.2f}" if detail['host'][
+                                                                                                                  'MemTotal'] != 0 else "0"
+                    """流量"""
+                    NetInTransfer = humanize.naturalsize(detail['status']['NetInTransfer'], gnu=True)
+                    NetOutTransfer = humanize.naturalsize(detail['status']['NetOutTransfer'], gnu=True)
+                    """网速"""
+                    NetInSpeed = humanize.naturalsize(detail['status']['NetInSpeed'], gnu=True)
+                    NetOutSpeed = humanize.naturalsize(detail['status']['NetOutSpeed'], gnu=True)
 
-            status_msg = f"· 🌐 服务器 | {detail['name']} · {uptime}\n" \
-                         f"· 💫 CPU | {CPU}% \n" \
-                         f"· 🌩️ 内存 | {Mempercent}% [{MemUsed}/{MemTotal}]\n" \
-                         f"· ⚡ 网速 | ↓{NetInSpeed}/s  ↑{NetOutSpeed}/s\n" \
-                         f"· 🌊 流量 | ↓{NetInTransfer}  ↑{NetOutTransfer}\n"
-            b.append(dict(name=f'{detail["name"]}', id=detail["id"], server=status_msg))
+                    status_msg = f"· 🌐 服务器 | {detail['name']} · {uptime}\n" \
+                                 f"· 💫 CPU | {CPU}% \n" \
+                                 f"· 🌩️ 内存 | {Mempercent}% [{MemUsed}/{MemTotal}]\n" \
+                                 f"· ⚡ 网速 | ↓{NetInSpeed}/s  ↑{NetOutSpeed}/s\n" \
+                                 f"· 🌊 流量 | ↓{NetInTransfer}  ↑{NetOutTransfer}\n"
+                    b.append(dict(name=f'{detail["name"]}', id=detail["id"], server=status_msg))
         return b
-    except:
+    except Exception as e:
+        LOGGER.error(f"获取哪吒探针信息失败: {e}")
         return None
     # """交换区"""
     # # SwapTotal = humanize.naturalsize(detail['host']['SwapTotal'], gnu=True)                                                                                              'MemTotal'] != 0 else "0"
