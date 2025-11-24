@@ -141,7 +141,7 @@ with contextlib.suppress(ImportError):
 from pyrogram import enums
 from pyromod import Client
 
-proxy = {} if not config.proxy.scheme else config.proxy.dict()
+proxy = {} if not config.proxy.scheme else config.proxy.model_dump()
 
 bot = Client(bot_name, api_id=owner_api, api_hash=owner_hash, bot_token=bot_token, proxy=proxy,
              workers=300,

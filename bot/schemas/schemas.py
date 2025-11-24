@@ -1,7 +1,8 @@
 import json
 import os
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Union
+from typing_extensions import Self
 
 # 嵌套式的数据设计，规范数据 config.json
 
@@ -58,10 +59,11 @@ class Open(BaseModel):
     whitelist_cost: int = 9999
     invite_cost: int = 1000
 
-    # 每次创建 Open 对象时被重置为 0
-    def __init__(self, **data):
-        super().__init__(**data)
+    @model_validator(mode='after')
+    def reset_timing(self) -> Self:
+        """每次创建 Open 对象时将 timing 重置为 0"""
         self.timing = 0
+        return self
 
 
 class Ranks(BaseModel):
@@ -82,14 +84,16 @@ class Schedall(BaseModel):
     restart_msg_id: int = 0
     backup_db: bool = True
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    @model_validator(mode='after')
+    def load_rank_ids(self) -> Self:
+        """从 rank.json 加载 message_id"""
         if self.day_ranks_message_id == 0 or self.week_ranks_message_id == 0:
             if os.path.exists("log/rank.json"):
                 with open("log/rank.json", "r") as f:
                     i = json.load(f)
                     self.day_ranks_message_id = i.get("day_ranks_message_id", 0)
                     self.week_ranks_message_id = i.get("week_ranks_message_id", 0)
+        return self
 
 
 class Proxy(BaseModel):
@@ -122,13 +126,10 @@ class API(BaseModel):
     status: bool = False  # 默认关闭
     http_url: Optional[str] = "0.0.0.0"
     http_port: Optional[int] = 8838
-    allow_origins: Optional[List[Union[str, int]]] = None
+    allow_origins: Optional[List[Union[str, int]]] = Field(default_factory=lambda: ["*"])
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        if self.allow_origins is None:
-            self.allow_origins = ["*"]
-            # 如果未设置，默认为 ["*"]，为了安全可以设置成本机ip&反代的域名，列表可包含多个
+    # 不再需要 __init__ 方法，使用 Field(default_factory) 设置默认值
+
 class RedEnvelope(BaseModel):
     status: bool = True  # 是否开启红包
     allow_private: bool = True # 是否允许专属红包
@@ -191,10 +192,12 @@ class Config(BaseModel):
     red_envelope: RedEnvelope = Field(default_factory=RedEnvelope)
     api: API = Field(default_factory=API)
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    @model_validator(mode='after')
+    def remove_owner_from_admins(self) -> Self:
+        """确保 owner 不在 admins 列表中"""
         if self.owner in self.admins:
             self.admins.remove(self.owner)
+        return self
 
     @classmethod
     def load_config(cls):
