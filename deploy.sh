@@ -458,7 +458,7 @@ main() {
   "chanel": $CHANEL_JSON,
   "bot_photo": $BOT_PHOTO_JSON,
   "admins": [],
-  "money": "$MONEY",
+  "credits_name": "$MONEY",
   "emby_api": "$EMBY_API",
   "emby_url": "$EMBY_URL",
   "emby_line": "$EMBY_LINE",
@@ -513,7 +513,7 @@ main() {
   "tz_api": "",
   "tz_id": [],
   "ranks": {
-    "logo": "SAKURA",
+    "logo": "EmbyBot",
     "backdrop": false
   },
   "schedall": {

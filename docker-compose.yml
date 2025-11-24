@@ -32,9 +32,9 @@ services:
 #    depends_on:
 #      - mysql
 
-  embyboss:
+  embybot:
     image: ghcr.io/omnihelm/emby-bot:latest # 使用 GitHub Container Registry，ARM与AMD镜像名称相同，会自动加载适合的镜像
-    container_name: embyboss
+    container_name: embybot
     restart: always
     network_mode: host
     volumes:
