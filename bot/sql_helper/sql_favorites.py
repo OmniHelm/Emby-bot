@@ -1,45 +1,61 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, UniqueConstraint, Index
 from bot.sql_helper import Base, engine, Session
 from bot import LOGGER
 
 class EmbyFavorites(Base):
-    """Emby收藏记录表"""
+    """
+    Emby 收藏记录表
+    新增 server_id 字段支持多服务器
+    """
     __tablename__ = 'emby_favorites'
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # 新增：服务器标识字段
+    server_id = Column(
+        String(50),
+        nullable=False,
+        default='main',
+        index=True,
+        comment='关联的 Emby 服务器 ID'
+    )
+
     embyid = Column(String(64), nullable=False, comment="Emby用户ID")
     embyname = Column(String(128), nullable=False, comment="Emby用户名")
     item_id = Column(String(64), nullable=False, comment="Emby项目ID")
     item_name = Column(String(256), nullable=False, comment="项目名称")
     created_at = Column(DateTime, default=datetime.now, comment="收藏时间")
-    
-    # 创建联合唯一索引
+
+    # 创建联合唯一索引（包含 server_id）
     __table_args__ = (
-        UniqueConstraint('embyid', 'item_id', name='uix_emby_item'),
+        UniqueConstraint('server_id', 'embyid', 'item_id', name='uix_server_emby_item'),
+        Index('idx_favorites_server_embyname', 'server_id', 'embyname'),
     ) 
 
 EmbyFavorites.__table__.create(bind=engine, checkfirst=True)
 
-def sql_add_favorites(embyid: str, embyname: str, item_id: str, item_name: str, is_favorite: bool = True) -> bool:
+def sql_add_favorites(embyid: str, embyname: str, item_id: str, item_name: str, server_id: str = 'main', is_favorite: bool = True) -> bool:
     """
-    添加或删除收藏记录
+    添加或删除收藏记录（多服务器版本）
     以 emby_name 为主要判断依据，因为 emby_id 可能会变化
-    
+
     Args:
         embyid: Emby用户ID
         embyname: Emby用户名
         item_id: 项目ID
         item_name: 项目名称
+        server_id: 服务器ID，默认 'main'
         is_favorite: True为收藏，False为取消收藏
     """
     try:
         with Session() as session:
             if is_favorite:
-                # 收藏操作：以 embyname 为主要标识符（embyname 是唯一且不变的）
-                
+                # 收藏操作：以 embyname 和 server_id 为主要标识符
+
                 # 查找该用户是否已收藏此项目
                 existing_list = session.query(EmbyFavorites).filter(
+                    EmbyFavorites.server_id == server_id,
                     EmbyFavorites.embyname == embyname,
                     EmbyFavorites.item_id == item_id
                 ).all()
@@ -70,17 +86,19 @@ def sql_add_favorites(embyid: str, embyname: str, item_id: str, item_name: str, 
                 else:
                     # 不存在收藏记录，创建新记录
                     favorite = EmbyFavorites(
+                        server_id=server_id,
                         embyid=embyid,
                         embyname=embyname,
                         item_id=item_id,
                         item_name=item_name
                     )
                     session.add(favorite)
-                    LOGGER.info(f"新增收藏记录: {embyname} -> {item_name} (EmbyID: {embyid})")
+                    LOGGER.info(f"新增收藏记录: {embyname} -> {item_name} (EmbyID: {embyid}, Server: {server_id})")
                     
             else:
-                # 取消收藏操作：根据 embyname 删除记录
+                # 取消收藏操作：根据 server_id 和 embyname 删除记录
                 records_to_delete = session.query(EmbyFavorites).filter(
+                    EmbyFavorites.server_id == server_id,
                     EmbyFavorites.embyname == embyname,
                     EmbyFavorites.item_id == item_id
                 ).all()
@@ -103,21 +121,49 @@ def sql_add_favorites(embyid: str, embyname: str, item_id: str, item_name: str, 
         LOGGER.error(f"操作收藏记录失败: {str(e)}")
         return False
     
-def sql_clear_favorites(emby_name: str) -> bool:
-    """清除Emby用户的收藏记录"""
+def sql_clear_favorites(emby_name: str, server_id: str = None) -> bool:
+    """
+    清除 Emby 用户的收藏记录（多服务器版本）
+
+    Args:
+        emby_name: Emby 用户名
+        server_id: 可选，服务器 ID。如果为 None，清除所有服务器的记录
+
+    Returns:
+        是否成功
+    """
     try:
         with Session() as session:
-            session.query(EmbyFavorites).filter(EmbyFavorites.embyname == emby_name).delete()
+            query = session.query(EmbyFavorites).filter(EmbyFavorites.embyname == emby_name)
+            if server_id:
+                query = query.filter(EmbyFavorites.server_id == server_id)
+            query.delete()
             session.commit()
         return True
     except Exception as e:
         LOGGER.error(f"清除收藏记录失败: {str(e)}")
         return False
-def sql_get_favorites(embyid: str, page: int = 1, page_size: int = 20) -> list:
-    """获取Emby用户的收藏记录"""
+
+
+def sql_get_favorites(embyid: str, server_id: str = None, page: int = 1, page_size: int = 20) -> list:
+    """
+    获取 Emby 用户的收藏记录（多服务器版本）
+
+    Args:
+        embyid: Emby 用户 ID
+        server_id: 可选，服务器 ID
+        page: 页码
+        page_size: 每页数量
+
+    Returns:
+        EmbyFavorites 对象列表
+    """
     try:
         with Session() as session:
-            return session.query(EmbyFavorites).filter(EmbyFavorites.embyid == embyid).offset((page - 1) * page_size).limit(page_size).all()
+            query = session.query(EmbyFavorites).filter(EmbyFavorites.embyid == embyid)
+            if server_id:
+                query = query.filter(EmbyFavorites.server_id == server_id)
+            return query.offset((page - 1) * page_size).limit(page_size).all()
     except Exception as e:
         LOGGER.error(f"获取收藏记录失败: {str(e)}")
         return []
