@@ -86,7 +86,7 @@ class EmbyApiResult:
         return self.success
 
 
-class Embyservice(metaclass=Singleton):
+class Embyservice:
     """
     Emby API 服务类 - 使用 aiohttp 重构版本
     提供统一的异步HTTP请求、错误处理、重试机制和资源管理
@@ -1451,5 +1451,5 @@ class Embyservice(metaclass=Singleton):
                 pass
 
 
-# 创建全局实例
-emby = Embyservice(emby_url, emby_api)
+# 全局实例已移除，现在使用 EmbyServerManager
+# 请从 bot.func_helper.emby_manager 导入 emby_manager
