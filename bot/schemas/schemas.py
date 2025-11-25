@@ -1,6 +1,6 @@
 import json
 import os
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 from typing import List, Optional, Union
 from typing_extensions import Self
 
@@ -18,6 +18,39 @@ class ExDate(BaseModel):
     unused: int = -1
     code: str = 'code'
     link: str = 'link'
+
+
+class EmbyServerConfig(BaseModel):
+    """
+    单个 Emby 服务器配置
+
+    用于管理不同内容类型的服务器（如：动漫服、电影服、剧集服）
+    每个服务器独立运行，用户手动选择访问哪个服务器
+    """
+    id: str = Field(..., description="服务器唯一标识（如：anime, movie, series）")
+    name: str = Field(..., description="服务器显示名称（如：动漫服务器、电影服务器）")
+    api_key: str = Field(..., description="Emby API 密钥")
+    url: str = Field(..., description="服务器内部访问地址")
+    line: str = Field(..., description="用户访问线路地址")
+    whitelist_line: Optional[str] = Field(None, description="白名单用户专属线路（可选）")
+    enabled: bool = Field(True, description="是否启用该服务器")
+
+    @field_validator('id')
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        """验证 ID 格式：只能包含字母、数字、下划线、连字符"""
+        if not v or not v.replace('_', '').replace('-', '').isalnum():
+            raise ValueError("服务器 ID 必须是字母数字或下划线、连字符组合")
+        return v
+
+    @field_validator('url')
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        """验证并标准化 URL"""
+        v = v.rstrip('/')
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError("URL 必须以 http:// 或 https:// 开头")
+        return v
 
 
 # class UserBuy(BaseModel):
@@ -147,10 +180,18 @@ class Config(BaseModel):
     open: Open
     admins: Optional[List[int]] = []
     credits_name: str
-    emby_api: str
-    emby_url: str
+
+    # 多服务器配置（新增）
+    emby_servers: Optional[List[EmbyServerConfig]] = None
+
+    # 向后兼容旧配置（保留但标记为可选）
+    emby_api: Optional[str] = None
+    emby_url: Optional[str] = None
+    emby_line: Optional[str] = None
+    emby_whitelist_line: Optional[str] = None
+
+    # 共享配置
     emby_block: Optional[List[str]] = []
-    emby_line: str
     extra_emby_libs: Optional[List[str]] = []
     db_host: str
     db_user: str
@@ -192,6 +233,45 @@ class Config(BaseModel):
     red_envelope: RedEnvelope = Field(default_factory=RedEnvelope)
     api: API = Field(default_factory=API)
 
+    @model_validator(mode='before')
+    @classmethod
+    def convert_legacy_config(cls, data: dict) -> dict:
+        """自动转换旧配置为新格式"""
+        # 如果新配置存在，直接使用
+        if data.get('emby_servers'):
+            return data
+
+        # 如果是旧配置，自动转换
+        if data.get('emby_api') and data.get('emby_url'):
+            from loguru import logger
+            logger.warning("检测到旧版配置格式，自动转换为多服务器格式")
+
+            data['emby_servers'] = [{
+                "id": "main",
+                "name": "主服务器",
+                "api_key": data.get('emby_api'),
+                "url": data.get('emby_url'),
+                "line": data.get('emby_line', ''),
+                "whitelist_line": data.get('emby_whitelist_line'),
+                "enabled": True
+            }]
+
+        return data
+
+    @field_validator('emby_servers')
+    @classmethod
+    def validate_emby_servers(cls, v: Optional[List[EmbyServerConfig]]) -> List[EmbyServerConfig]:
+        """验证服务器列表"""
+        if not v:
+            raise ValueError("必须配置至少一个 Emby 服务器")
+
+        # 检查 ID 唯一性
+        ids = [server.id for server in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("服务器 ID 必须唯一")
+
+        return v
+
     @model_validator(mode='after')
     def remove_owner_from_admins(self) -> Self:
         """确保 owner 不在 admins 列表中"""
@@ -208,6 +288,46 @@ class Config(BaseModel):
     def save_config(self):
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(self.model_dump(), f, indent=4, ensure_ascii=False)
+
+    def get_server_by_id(self, server_id: str) -> Optional[EmbyServerConfig]:
+        """
+        根据 ID 获取服务器配置
+
+        Args:
+            server_id: 服务器唯一标识（如：anime, movie, series）
+
+        Returns:
+            服务器配置对象，如果不存在或未启用则返回 None
+        """
+        if not self.emby_servers:
+            return None
+
+        for server in self.emby_servers:
+            if server.id == server_id and server.enabled:
+                return server
+
+        return None
+
+    def get_enabled_servers(self) -> List[EmbyServerConfig]:
+        """
+        获取所有启用的服务器列表
+
+        Returns:
+            启用的服务器配置列表
+        """
+        if not self.emby_servers:
+            return []
+
+        return [s for s in self.emby_servers if s.enabled]
+
+    def list_server_ids(self) -> List[str]:
+        """
+        列出所有启用的服务器 ID
+
+        Returns:
+            服务器 ID 列表（如：['anime', 'movie', 'series']）
+        """
+        return [s.id for s in self.get_enabled_servers()]
 
 
 class Yulv(BaseModel):

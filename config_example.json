@@ -12,6 +12,37 @@
   "bot_photo": "https://telegra.ph/file/3b6cd2a89b652e72e0d3b.png",
   "admins": [],
   "credits_name": "积分",
+  "_comment_emby_servers": "=== 多服务器配置（推荐）：用于管理不同内容类型的服务器（如：动漫服、电影服、剧集服） ===",
+  "emby_servers": [
+    {
+      "id": "anime",
+      "name": "动漫服务器",
+      "api_key": "your_anime_server_api_key",
+      "url": "http://anime-server.local:8096",
+      "line": "https://anime.example.com",
+      "whitelist_line": "https://vip-anime.example.com",
+      "enabled": true
+    },
+    {
+      "id": "movie",
+      "name": "电影服务器",
+      "api_key": "your_movie_server_api_key",
+      "url": "http://movie-server.local:8096",
+      "line": "https://movie.example.com",
+      "whitelist_line": null,
+      "enabled": true
+    },
+    {
+      "id": "series",
+      "name": "剧集服务器",
+      "api_key": "your_series_server_api_key",
+      "url": "http://series-server.local:8096",
+      "line": "https://series.example.com",
+      "whitelist_line": null,
+      "enabled": true
+    }
+  ],
+  "_comment_legacy": "=== 旧版单服务器配置（向后兼容，如果配置了 emby_servers 则下面的配置会被自动转换）===",
   "emby_api": "xxxxx",
   "emby_url": "http://255.255.255.255:8096",
   "emby_line": "susuyyds.com",
