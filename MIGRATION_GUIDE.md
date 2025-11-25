@@ -1,12 +1,12 @@
 # 迁移指南 (Migration Guide)
 
-## 📋 适用场景
+## 适用场景
 
 如果你正在从旧版本（重构前）迁移到新版本（重构后），请按照本指南操作。
 
 ---
 
-## ⚠️ 重要提示
+## 重要提示
 
 ✅ **数据库数据完全兼容** - 数据表结构和数据无需任何修改
 ✅ **功能完全兼容** - 所有功能保持不变
@@ -15,7 +15,7 @@
 
 ---
 
-## 🚀 迁移步骤
+## 迁移步骤
 
 ### 步骤 1: 备份现有配置和数据
 
@@ -32,17 +32,9 @@ tar -czf embybot_backup_$(date +%Y%m%d).tar.gz /path/to/EmbyBot
 
 ### 步骤 2: 停止旧服务
 
-#### Docker 模式
 ```bash
 cd /path/to/EmbyBot
 docker-compose down
-```
-
-#### Systemd 模式
-```bash
-sudo systemctl stop embyboss
-# 或
-sudo systemctl stop embybot
 ```
 
 ### 步骤 3: 更新配置文件
@@ -93,7 +85,7 @@ cp ../config.json.backup config.json
 # 记得修改配置文件字段（见步骤 3）
 ```
 
-### 步骤 5: 更新 Docker 配置（仅 Docker 模式）
+### 步骤 5: 更新 Docker 配置
 
 **修改 `docker-compose.yml`**:
 
@@ -153,7 +145,6 @@ DROP DATABASE embyboss;
 
 ### 步骤 6: 启动新服务
 
-#### Docker 模式
 ```bash
 # 拉取新镜像
 docker pull ghcr.io/omnihelm/emby-bot:latest
@@ -165,47 +156,14 @@ docker-compose up -d
 docker-compose logs -f embybot
 ```
 
-#### Systemd 模式
-
-**如果 service 文件名改变了**：
-
-```bash
-# 1. 停止旧服务
-sudo systemctl stop embyboss
-
-# 2. 禁用旧服务
-sudo systemctl disable embyboss
-
-# 3. 重命名或创建新服务文件
-sudo mv /etc/systemd/system/embyboss.service /etc/systemd/system/embybot.service
-
-# 4. 编辑服务文件（如果路径改变）
-sudo vi /etc/systemd/system/embybot.service
-# 更新 WorkingDirectory 和 ExecStart 路径
-
-# 5. 重新加载 systemd
-sudo systemctl daemon-reload
-
-# 6. 启动新服务
-sudo systemctl start embybot
-sudo systemctl enable embybot
-
-# 7. 查看状态
-sudo systemctl status embybot
-```
-
 ### 步骤 7: 验证运行
 
 ```bash
 # 1. 检查服务状态
-docker-compose ps  # Docker 模式
-# 或
-sudo systemctl status embybot  # Systemd 模式
+docker-compose ps
 
 # 2. 查看日志
-docker-compose logs -f embybot  # Docker 模式
-# 或
-journalctl -u embybot -f  # Systemd 模式
+docker-compose logs -f embybot
 
 # 3. 测试 Bot 功能
 # 在 Telegram 中发送 /start 命令测试
@@ -213,13 +171,13 @@ journalctl -u embybot -f  # Systemd 模式
 
 ---
 
-## 🔍 常见问题
+## 常见问题
 
 ### Q1: 配置文件字段名错误会怎样？
 
 **现象**: Bot 启动失败，提示配置加载错误
 
-**解决**: 
+**解决**:
 ```bash
 # 检查配置文件
 python3 -c "import json; json.load(open('config.json'))"
@@ -231,7 +189,7 @@ grep -E "money|credits_name" config.json
 
 ### Q2: Docker 容器名冲突
 
-**现象**: 
+**现象**:
 ```
 Error: Conflict. The container name "/embyboss" is already in use
 ```
@@ -258,9 +216,6 @@ docker-compose up -d
 docker exec -it mysql mysql -u root -p -e "USE embyboss; SELECT COUNT(*) FROM emby;"
 # 或如果改了数据库名
 docker exec -it mysql mysql -u root -p -e "USE embybot; SELECT COUNT(*) FROM emby;"
-
-# 直接模式
-mysql -u root -p -e "USE embyboss; SELECT COUNT(*) FROM emby;"
 ```
 
 **重要**：如果你保持使用旧数据库名 `embyboss`，确保 `config.json` 中 `db_name` 仍然是 `"embyboss"`。
@@ -281,25 +236,9 @@ cd EmbyBot_new
 docker-compose up -d
 ```
 
-### Q5: Systemd 服务找不到
-
-**现象**:
-```
-Unit embyboss.service not found
-```
-
-**解决**:
-```bash
-# 查找实际的服务文件位置
-sudo find /etc/systemd -name "*emby*"
-
-# 如果服务文件名是 embybot.service
-sudo systemctl status embybot
-```
-
 ---
 
-## 📊 迁移验证清单
+## 迁移验证清单
 
 完成迁移后，请检查以下项目：
 
@@ -314,13 +253,13 @@ sudo systemctl status embybot
 
 ---
 
-## 🆘 回滚方案
+## 回滚方案
 
 如果迁移遇到问题需要回滚：
 
 ```bash
 # 1. 停止新服务
-docker-compose down  # 或 systemctl stop embybot
+docker-compose down
 
 # 2. 恢复旧配置
 cp config.json.backup config.json
@@ -329,19 +268,15 @@ cp config.json.backup config.json
 # ... 根据你的备份方式恢复
 
 # 4. 重启旧服务
-docker-compose up -d  # 或 systemctl start embyboss
+docker-compose up -d
 ```
 
 ---
 
-## 📞 需要帮助？
+## 需要帮助？
 
 如果遇到问题：
 
-1. 查看日志：`docker-compose logs -f` 或 `journalctl -u embybot -f`
+1. 查看日志：`docker-compose logs -f`
 2. 检查配置：确保 `config.json` 字段名正确
 3. 提交 Issue：https://github.com/OmniHelm/Emby-bot/issues
-
----
-
-**祝迁移顺利！** 🎉

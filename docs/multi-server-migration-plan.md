@@ -1,25 +1,55 @@
-# EmbyBot 多服务器支持改造方案（方案A）
+# EmbyBot 多服务器支持技术方案
+
+> 📌 **实施说明**
+>
+> 本文档描述了多服务器支持的实际落地方案和迁移步骤，聚焦内容分类与手动指定服务器的模式。
+>
+> **当前设计要点**：
+> - 每个服务器提供不同内容类型（动漫服、电影服、剧集服）
+> - 管理员创建用户时手动指定服务器 ID
+> - 配置字段：`id`, `name`, `api_key`, `url`, `line`, `whitelist_line`, `enabled`
+>
+> **相关文档**：
+> - [快速开始指南](./multi-server-quickstart.md) - 推荐新用户阅读
+> - [迁移完成报告](./MIGRATION_COMPLETED.md) - 实际实施记录
+> - [补充说明](./multi-server-supplement.md) - 技术细节
+>
+> **文档用途**：
+> - 记录多服务器改造的实施方案和迁移步骤
+> - 核心架构（数据库、服务层、业务层）已完全实施
+
+> ⚠️ **重要兼容说明（废弃旧方案）**
+>
+> 早期设计曾计划给 `emby` 表新增 `server_id` 字段以表示用户归属服务器。  
+> 该方案已废弃，现网采用“绑定表”模式：用 `emby_server_bindings (tg, server_id, embyid, is_primary, ...)` 记录用户与服务器关系，
+> `emby` 表不再存放 `server_id`。  
+> 请使用脚本 `scripts/migrate_bindings.py` 进行绑定迁移（详见“快速开始指南”与脚本帮助）。
+
+---
 
 ## 文档版本
-- **版本**: v1.0
+- **版本**: v2.0
 - **日期**: 2025-11-24
-- **状态**: 实施方案
+- **状态**: 技术参考文档
+- **实施方案**: 内容分类管理（手动指定服务器）
 
 ---
 
 ## 一、方案概述
 
 ### 1.1 改造目标
+
+**实际实施的目标**：
 将 EmbyBot 从单服务器架构升级为多服务器架构，支持：
-- ✅ 配置并管理多个 Emby 服务器
-- ✅ 用户创建时自动分配或手动选择服务器
-- ✅ 智能负载均衡和服务器健康检查
-- ✅ 服务器故障隔离和切换
+- ✅ 配置并管理多个 Emby 服务器（不同内容类型）
+- ✅ 用户创建时手动指定服务器
+- ✅ 每个服务器独立运行，内容互不干扰
 - ✅ 向后兼容现有单服务器数据
+- ✅ 灵活的服务器配置（动漫服、电影服、剧集服等）
 
 ### 1.2 核心设计
 - **配置层**: 支持多服务器配置列表
-- **数据库层**: 添加 `server_id` 字段关联用户与服务器
+- **数据库层**: 使用 `emby_server_bindings` 绑定用户与服务器（`emby` 表不再持久化 `server_id`）
 - **服务层**: `EmbyServerManager` 管理多个 `Embyservice` 实例
 - **业务层**: 动态获取用户对应的服务实例
 
@@ -90,27 +120,21 @@
 {
   "emby_servers": [
     {
-      "id": "main",
-      "name": "主服务器",
+      "id": "anime",
+      "name": "动漫服务器",
       "api_key": "xxxxx",
-      "url": "http://255.255.255.255:8096",
-      "line": "susuyyds.com",
-      "whitelist_line": null,
-      "is_default": true,
-      "max_users": 500,
-      "priority": 1,
+      "url": "http://anime.local:8096",
+      "line": "anime.example.com",
+      "whitelist_line": "vip.anime.example.com",
       "enabled": true
     },
     {
-      "id": "backup",
-      "name": "备用服务器",
+      "id": "movie",
+      "name": "电影服务器",
       "api_key": "yyyyy",
-      "url": "http://192.168.1.100:8096",
-      "line": "backup.susuyyds.com",
-      "whitelist_line": "vip.backup.susuyyds.com",
-      "is_default": false,
-      "max_users": 300,
-      "priority": 2,
+      "url": "http://movie.local:8096",
+      "line": "movie.example.com",
+      "whitelist_line": null,
       "enabled": true
     }
   ],
@@ -132,9 +156,6 @@
 | `url` | string | ✅ | Emby 服务器地址 |
 | `line` | string | ✅ | 普通用户线路地址 |
 | `whitelist_line` | string | ❌ | 白名单用户专属线路 |
-| `is_default` | boolean | ❌ | 是否为默认服务器（默认 false） |
-| `max_users` | integer | ❌ | 最大用户数限制 |
-| `priority` | integer | ❌ | 优先级（数字越小优先级越高，默认 99） |
 | `enabled` | boolean | ❌ | 是否启用（默认 true） |
 
 #### 步骤 1.2：更新 Pydantic 配置模型
@@ -154,9 +175,6 @@ class EmbyServerConfig(BaseModel):
     url: str = Field(..., description="服务器地址")
     line: str = Field(..., description="线路地址")
     whitelist_line: Optional[str] = Field(None, description="白名单线路")
-    is_default: bool = Field(False, description="是否为默认服务器")
-    max_users: Optional[int] = Field(None, description="最大用户数")
-    priority: int = Field(99, description="优先级，数字越小优先级越高")
     enabled: bool = Field(True, description="是否启用")
 
     @validator('id')
@@ -174,26 +192,16 @@ class EmbyServerConfig(BaseModel):
             raise ValueError("URL 必须以 http:// 或 https:// 开头")
         return v
 
-    @validator('max_users')
-    def validate_max_users(cls, v):
-        """验证用户数限制"""
-        if v is not None and v <= 0:
-            raise ValueError("最大用户数必须大于 0")
-        return v
-
     class Config:
         """Pydantic 配置"""
         json_schema_extra = {
             "example": {
-                "id": "main",
-                "name": "主服务器",
+                "id": "anime",
+                "name": "动漫服务器",
                 "api_key": "xxxxx",
                 "url": "http://emby.example.com:8096",
-                "line": "emby.example.com",
-                "whitelist_line": "vip.emby.example.com",
-                "is_default": True,
-                "max_users": 500,
-                "priority": 1,
+                "line": "anime.example.com",
+                "whitelist_line": "vip.anime.example.com",
                 "enabled": True
             }
         }
@@ -245,25 +253,7 @@ class Config(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("服务器 ID 必须唯一")
 
-        # 检查默认服务器数量
-        default_count = sum(1 for server in v if server.is_default)
-        if default_count == 0:
-            raise ValueError("至少需要设置一个默认服务器")
-        if default_count > 1:
-            raise ValueError("只能设置一个默认服务器")
-
         return v
-
-    def get_default_server(self) -> Optional[EmbyServerConfig]:
-        """获取默认服务器配置"""
-        for server in self.emby_servers:
-            if server.is_default and server.enabled:
-                return server
-        # 如果没有默认服务器，返回第一个启用的服务器
-        for server in self.emby_servers:
-            if server.enabled:
-                return server
-        return None
 
     def get_server_by_id(self, server_id: str) -> Optional[EmbyServerConfig]:
         """根据 ID 获取服务器配置"""
@@ -276,12 +266,9 @@ class Config(BaseModel):
         """获取所有启用的服务器"""
         return [s for s in self.emby_servers if s.enabled]
 
-    def get_servers_sorted_by_priority(self) -> List[EmbyServerConfig]:
-        """按优先级排序获取服务器"""
-        return sorted(
-            [s for s in self.emby_servers if s.enabled],
-            key=lambda s: (s.priority, s.id)
-        )
+    def list_server_ids(self) -> List[str]:
+        """列出所有启用的服务器 ID"""
+        return [s.id for s in self.get_enabled_servers()]
 ```
 
 **向后兼容处理** (可选):
@@ -306,13 +293,11 @@ class Config(BaseModel):
         if 'emby_api' in values and values['emby_api']:
             return [{
                 "id": "main",
-                "name": "主服务器",
+                "name": "单服务器实例",
                 "api_key": values.get('emby_api'),
                 "url": values.get('emby_url', ''),
                 "line": values.get('emby_line', ''),
                 "whitelist_line": values.get('emby_whitelist_line'),
-                "is_default": True,
-                "priority": 1,
                 "enabled": True
             }]
 
@@ -1148,14 +1133,9 @@ def get_user_emby_service(tg: int) -> Tuple[Optional[Embyservice], Optional[Emby
     # 获取服务器配置
     server_id = user.server_id
     if not server_id:
-        # 如果用户没有 server_id，尝试使用默认服务器
-        default_server = config.get_default_server()
-        if default_server:
-            server_id = default_server.id
-            logger.warning(f"用户 tg={tg} 缺少 server_id，使用默认服务器: {server_id}")
-        else:
-            logger.error(f"用户 tg={tg} 缺少 server_id 且无默认服务器")
-            return None, None, None
+        # 兼容旧数据，使用 main 作为兜底
+        server_id = 'main'
+        logger.warning(f"用户 tg={tg} 缺少 server_id，使用兼容服务器: {server_id}")
 
     server_config = config.get_server_by_id(server_id)
     if not server_config:
@@ -1196,119 +1176,31 @@ def get_emby_line(server_id: str, is_whitelist: bool = False) -> str:
     return server_config.line
 
 
-def select_available_server() -> Optional[EmbyServerConfig]:
+def get_server_by_id_or_none(server_id: str) -> Optional[EmbyServerConfig]:
     """
-    智能选择可用服务器
-    策略: 按优先级排序，选择未达到用户上限的服务器
-
-    Returns:
-        EmbyServerConfig 对象或 None
-
-    Example:
-        >>> server = select_available_server()
-        >>> if server:
-        >>>     print(f"选择的服务器: {server.name}")
-    """
-    # 获取按优先级排序的服务器列表
-    servers = config.get_servers_sorted_by_priority()
-
-    for server in servers:
-        # 检查是否达到最大用户数
-        if server.max_users:
-            current_users = count_users_by_server(server.id)
-            if current_users >= server.max_users:
-                logger.info(
-                    f"服务器 {server.name} 已达到用户上限: "
-                    f"{current_users}/{server.max_users}"
-                )
-                continue
-
-        # 检查服务器是否可用
-        if not emby_manager.has_server(server.id):
-            logger.warning(f"服务器 {server.name} 未注册，跳过")
-            continue
-
-        logger.info(f"选择服务器: {server.name} ({server.id})")
-        return server
-
-    logger.error("没有可用的服务器")
-    return None
-
-
-def select_server_by_load() -> Optional[EmbyServerConfig]:
-    """
-    根据负载选择服务器
-    策略: 选择用户数占比最低的服务器
-
-    Returns:
-        EmbyServerConfig 对象或 None
-    """
-    servers = config.get_enabled_servers()
-
-    if not servers:
-        return None
-
-    # 计算每个服务器的负载
-    loads = []
-    for server in servers:
-        if not emby_manager.has_server(server.id):
-            continue
-
-        current_users = count_users_by_server(server.id)
-        max_users = server.max_users or 999999
-        load_ratio = current_users / max_users
-
-        loads.append((load_ratio, server))
-
-    if not loads:
-        return None
-
-    # 返回负载最低的服务器
-    loads.sort(key=lambda x: x[0])
-    selected_server = loads[0][1]
-
-    logger.info(
-        f"根据负载选择服务器: {selected_server.name} "
-        f"(负载: {loads[0][0]:.2%})"
-    )
-    return selected_server
-
-
-def get_server_display_info(server_id: str) -> dict:
-    """
-    获取服务器显示信息（用于前端展示）
+    根据 ID 获取服务器配置并验证其可用性
 
     Args:
         server_id: 服务器 ID
 
     Returns:
-        字典，包含服务器信息
+        服务器配置对象，如果不存在或不可用则返回 None
 
     Example:
-        >>> info = get_server_display_info('main')
-        >>> print(info['name'], info['users_count'])
+        >>> server = get_server_by_id_or_none('anime')
+        >>> if server:
+        >>>     print(f"找到服务器: {server.name}")
     """
+    # 从配置获取服务器
     server_config = config.get_server_by_id(server_id)
     if not server_config:
-        return {}
+        logger.error(f"服务器配置不存在: server_id={server_id}")
+        return None
 
-    current_users = count_users_by_server(server_id)
-
-    return {
-        'id': server_config.id,
-        'name': server_config.name,
-        'line': server_config.line,
-        'users_count': current_users,
-        'max_users': server_config.max_users,
-        'load_ratio': (
-            current_users / server_config.max_users
-            if server_config.max_users
-            else 0
-        ),
-        'priority': server_config.priority,
-        'is_default': server_config.is_default,
-        'enabled': server_config.enabled
-    }
+    # 检查服务器实例是否已注册
+    if not emby_manager.has_server(server_id):
+        logger.error(f"服务器实例未注册: server_id={server_id}")
+        return None
 
 
 def format_server_list_text() -> str:
@@ -1330,37 +1222,26 @@ def format_server_list_text() -> str:
     text = "**📡 Emby 服务器列表**\n\n"
 
     for server in servers:
-        info = get_server_display_info(server.id)
+        # 统计当前用户数
+        current_users = count_users_by_server(server.id)
 
-        # 状态图标
-        if info['is_default']:
-            icon = "🟢"
-        elif info['load_ratio'] > 0.8:
-            icon = "🔴"
-        elif info['load_ratio'] > 0.5:
-            icon = "🟡"
-        else:
-            icon = "🟢"
-
-        # 用户数显示
-        user_info = (
-            f"{info['users_count']}/{info['max_users']}"
-            if info['max_users']
-            else str(info['users_count'])
-        )
+        # 状态图标（简化版）
+        icon = "🟢" if emby_manager.has_server(server.id) else "🔴"
 
         text += (
-            f"{icon} **{info['name']}**\n"
-            f"   • ID: `{info['id']}`\n"
-            f"   • 用户数: {user_info}\n"
-            f"   • 线路: {info['line']}\n"
-            f"   • 优先级: {info['priority']}\n"
+            f"{icon} **{server.name}**\n"
+            f"   • ID: `{server.id}`\n"
+            f"   • 用户数: {current_users}\n"
+            f"   • 线路: {server.line}\n"
         )
 
-        if info['is_default']:
-            text += "   • 🏷️ 默认服务器\n"
+        if server.whitelist_line:
+            text += f"   • 白名单线路: {server.whitelist_line}\n"
 
         text += "\n"
+
+    text += f"**提示**：创建用户时需要指定服务器 ID\n"
+    text += f"例如：`/ucr username 30 {servers[0].id}`"
 
     return text
 
@@ -1392,7 +1273,8 @@ from bot import emby_manager, config, emby_block, extra_emby_libs
 from bot.func_helper.emby_utils import (
     get_user_emby_service,
     get_emby_line,
-    select_available_server
+    get_server_by_id_or_none,
+    format_server_list_text
 )
 from bot.sql_helper.sql_emby import add_emby, get_emby
 
@@ -1459,34 +1341,30 @@ async def create_user_handler(client: Client, message: Message):
     # 解析命令参数
     try:
         parts = message.text.split()
-        if len(parts) < 3:
+        if len(parts) < 4:
             await message.reply(
                 "❌ 参数不足\n"
-                "用法: `/newuser <用户名> <密码> [服务器ID]`"
+                "用法: `/newuser <用户名> <密码> <服务器ID>`\n\n"
+                f"{format_server_list_text()}"
             )
             return
 
         username = parts[1]
         password = parts[2]
-        server_id = parts[3] if len(parts) > 3 else None
+        server_id = parts[3]
 
     except Exception as e:
         await message.reply(f"❌ 参数解析失败: {e}")
         return
 
-    # 选择服务器
-    if server_id:
-        # 使用指定的服务器
-        target_server = config.get_server_by_id(server_id)
-        if not target_server:
-            await message.reply(f"❌ 服务器不存在: {server_id}")
-            return
-    else:
-        # 自动选择可用服务器
-        target_server = select_available_server()
-        if not target_server:
-            await message.reply("❌ 当前没有可用的服务器")
-            return
+    # 校验服务器
+    target_server = get_server_by_id_or_none(server_id)
+    if not target_server:
+        await message.reply(
+            f"❌ 服务器不存在或未启用: {server_id}\n\n"
+            f"{format_server_list_text()}"
+        )
+        return
 
     # 获取服务实例
     emby_service = emby_manager.get_server(target_server.id)
@@ -1925,20 +1803,19 @@ def check_server_id_column():
         session.close()
 
 
-def migrate_existing_users():
+def migrate_existing_users(target_server_id: str = 'main'):
     """
-    将现有用户迁移到默认服务器
+    将现有用户迁移到指定服务器
     """
     logger.info("开始迁移用户数据...")
 
-    # 获取默认服务器
-    default_server = config.get_default_server()
-
-    if not default_server:
-        logger.error("未找到默认服务器配置")
+    # 确定目标服务器
+    target_server = config.get_server_by_id(target_server_id)
+    if not target_server:
+        logger.error(f"目标服务器不存在或未启用: {target_server_id}")
         return False
 
-    logger.info(f"目标服务器: {default_server.name} ({default_server.id})")
+    logger.info(f"目标服务器: {target_server.name} ({target_server.id})")
 
     try:
         # 查询所有 server_id 为空或默认值的用户
@@ -1960,7 +1837,7 @@ def migrate_existing_users():
 
         for user in users:
             try:
-                user.server_id = default_server.id
+                user.server_id = target_server.id
                 session.add(user)
                 migrated_count += 1
 
@@ -2047,9 +1924,17 @@ def main():
         )
         return 1
 
+    # 选择迁移目标服务器（取第一个启用的配置）
+    enabled_servers = config.get_enabled_servers()
+    if not enabled_servers:
+        logger.error("❌ 未找到可用的服务器配置，终止迁移")
+        return 1
+    target_server_id = enabled_servers[0].id
+    logger.info(f"迁移目标服务器: {target_server_id}")
+
     # 步骤3: 迁移用户数据
     logger.info("\n步骤 3/4: 迁移用户数据")
-    if not migrate_existing_users():
+    if not migrate_existing_users(target_server_id):
         logger.error("❌ 用户数据迁移失败")
         return 1
 
@@ -2139,8 +2024,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 from bot import config
-from bot.func_helper.emby_utils import format_server_list_text, get_server_display_info
-from bot.sql_helper.sql_emby import get_server_stats
+from bot.func_helper.emby_utils import format_server_list_text
 
 
 @Client.on_message(filters.command('servers') & filters.private)
@@ -2151,60 +2035,6 @@ async def list_servers_handler(client: Client, message: Message):
     """
     text = format_server_list_text()
     await message.reply(text)
-
-
-@Client.on_message(filters.command('serverinfo') & filters.private)
-async def server_info_handler(client: Client, message: Message):
-    """
-    查看服务器详细信息
-    命令: /serverinfo <server_id>
-    """
-    parts = message.text.split()
-
-    if len(parts) < 2:
-        await message.reply(
-            "❌ 请指定服务器 ID\n"
-            "用法: `/serverinfo <server_id>`\n\n"
-            "查看所有服务器: /servers"
-        )
-        return
-
-    server_id = parts[1]
-    info = get_server_display_info(server_id)
-
-    if not info:
-        await message.reply(f"❌ 服务器不存在: {server_id}")
-        return
-
-    # 获取详细统计
-    stats = get_server_stats().get(server_id, {})
-
-    text = (
-        f"**📊 服务器详情**\n\n"
-        f"**名称**: {info['name']}\n"
-        f"**ID**: `{info['id']}`\n"
-        f"**线路**: `{info['line']}`\n"
-        f"**优先级**: {info['priority']}\n"
-        f"**用户数**: {info['users_count']}"
-    )
-
-    if info['max_users']:
-        text += f"/{info['max_users']}"
-        text += f" ({info['load_ratio']:.1%})"
-
-    text += "\n"
-
-    if info['is_default']:
-        text += "**类型**: 🏷️ 默认服务器\n"
-
-    # 用户等级分布
-    if stats and 'by_level' in stats:
-        text += "\n**用户等级分布**:\n"
-        level_names = {'a': '白名单', 'b': '正常', 'c': '临时', 'd': '未注册'}
-        for lv, count in stats['by_level'].items():
-            text += f"  • {level_names.get(lv, lv)}: {count}\n"
-
-    await message.reply(text)
 ```
 
 **注册命令** (在 `bot/__init__.py` 中):
@@ -2214,7 +2044,6 @@ from bot.modules.commands import servers
 
 # 添加到命令列表
 BotCommand('servers', '查看服务器列表'),
-BotCommand('serverinfo', '查看服务器详情'),
 ```
 
 #### 功能 7.2：服务器健康检查
@@ -2334,7 +2163,6 @@ import asyncio
 from bot import config, emby_manager
 from bot.func_helper.emby_utils import (
     get_user_emby_service,
-    select_available_server,
     validate_server_id
 )
 from bot.sql_helper.sql_emby import add_emby, get_emby, delete_emby
@@ -2347,27 +2175,20 @@ class TestMultiServer:
         """测试配置加载"""
         assert config is not None
         assert len(config.emby_servers) > 0
-        assert config.get_default_server() is not None
+        assert len(config.get_enabled_servers()) > 0
 
     def test_server_registration(self):
         """测试服务器注册"""
         assert emby_manager.get_server_count() > 0
 
-        for server_config in config.emby_servers:
-            if server_config.enabled:
-                assert emby_manager.has_server(server_config.id)
-
-    def test_server_selection(self):
-        """测试服务器选择"""
-        server = select_available_server()
-        assert server is not None
-        assert server.enabled is True
+        for server_config in config.get_enabled_servers():
+            assert emby_manager.has_server(server_config.id)
 
     def test_server_validation(self):
         """测试服务器验证"""
         # 有效的服务器 ID
-        default_server = config.get_default_server()
-        assert validate_server_id(default_server.id) is True
+        first_server = config.get_enabled_servers()[0]
+        assert validate_server_id(first_server.id) is True
 
         # 无效的服务器 ID
         assert validate_server_id('invalid_server') is False
@@ -2377,7 +2198,7 @@ class TestMultiServer:
     async def test_user_operations(self):
         """测试用户操作"""
         test_tg = 999999999
-        test_server_id = config.get_default_server().id
+        test_server_id = config.get_enabled_servers()[0].id
 
         # 添加测试用户
         result = add_emby(

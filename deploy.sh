@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# EmbyBot 一键部署脚本
+# EmbyBot 一键部署脚本 (Docker 版)
 # 用于交互式配置并部署项目
 
 set -e
@@ -139,11 +139,24 @@ validate_required() {
 # 主函数
 main() {
     clear
-    print_header "EmbyBot 一键部署脚本"
+    print_header "EmbyBot 一键部署脚本 (Docker)"
 
-    print_info "此脚本将引导你完成 EmbyBot 的配置和部署"
+    print_info "此脚本将引导你完成 EmbyBot 的配置和 Docker 部署"
     print_info "按 Ctrl+C 可随时退出"
     echo ""
+
+    # 检查 Docker 是否安装
+    if ! command -v docker &> /dev/null; then
+        print_error "未检测到 Docker，请先安装 Docker"
+        print_info "安装命令: curl -fsSL https://get.docker.com | bash"
+        exit 1
+    fi
+
+    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+        print_error "未检测到 Docker Compose"
+        print_info "请安装 Docker Compose 或使用 Docker 内置的 compose 插件"
+        exit 1
+    fi
 
     # 检查是否已存在配置文件
     if [ -f "config.json" ]; then
@@ -206,35 +219,13 @@ main() {
     # ==================== 数据库配置 ====================
     print_header "第 3 步: 数据库配置"
 
-    read_yes_no "是否使用 Docker 部署？" "y" USE_DOCKER
-
-    if [ "$USE_DOCKER" = true ]; then
-        print_info "Docker 模式下，建议使用 docker-compose.yml 中的 MySQL 配置"
-        read_input "数据库主机" "mysql" DB_HOST
-        read_input "数据库端口" "3306" DB_PORT
-        read_input "数据库用户名" "susu" DB_USER
-        read_input "数据库密码" "1234" DB_PWD true
-        read_input "数据库名称" "embybot" DB_NAME
-        DB_IS_DOCKER=true
-        read_input "MySQL Docker 容器名称" "mysql" DB_DOCKER_NAME
-    else
-        read_input "数据库主机" "localhost" DB_HOST
-        read_input "数据库端口" "3306" DB_PORT
-        while true; do
-            read_input "数据库用户名" "" DB_USER
-            validate_required "$DB_USER" "数据库用户名" && break
-        done
-        while true; do
-            read_input "数据库密码" "" DB_PWD true
-            validate_required "$DB_PWD" "数据库密码" && break
-        done
-        while true; do
-            read_input "数据库名称" "" DB_NAME
-            validate_required "$DB_NAME" "数据库名称" && break
-        done
-        DB_IS_DOCKER=false
-        DB_DOCKER_NAME="mysql"
-    fi
+    print_info "Docker 模式下，建议使用 docker-compose.yml 中的 MySQL 配置"
+    read_input "数据库主机" "mysql" DB_HOST
+    read_input "数据库端口" "3306" DB_PORT
+    read_input "数据库用户名" "susu" DB_USER
+    read_input "数据库密码" "1234" DB_PWD true
+    read_input "数据库名称" "embybot" DB_NAME
+    read_input "MySQL Docker 容器名称" "mysql" DB_DOCKER_NAME
 
     # ==================== 群组和频道配置 ====================
     print_header "第 4 步: 群组和频道配置"
@@ -525,7 +516,7 @@ main() {
     "low_activity": $SCHED_LOW_ACTIVITY,
     "backup_db": $SCHED_BACKUP_DB
   },
-  "db_is_docker": $DB_IS_DOCKER,
+  "db_is_docker": true,
   "db_docker_name": "$DB_DOCKER_NAME",
   "db_backup_dir": "$DB_BACKUP_DIR",
   "db_backup_maxcount": $DB_BACKUP_MAXCOUNT,
@@ -574,73 +565,28 @@ EOF
 
     print_success "配置文件已生成: config.json"
 
-    # ==================== 部署选项 ====================
+    # ==================== 部署 ====================
     print_header "开始部署"
 
-    if [ "$USE_DOCKER" = true ]; then
-        print_info "检测到使用 Docker 部署模式"
-
-        # 检查 Docker 是否安装
-        if ! command -v docker &> /dev/null; then
-            print_error "未检测到 Docker，请先安装 Docker"
-            print_info "安装命令: curl -fsSL https://get.docker.com | bash"
-            exit 1
-        fi
-
-        if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-            print_error "未检测到 Docker Compose"
-            print_info "请安装 Docker Compose 或使用 Docker 内置的 compose 插件"
-            exit 1
-        fi
-
-        read_yes_no "是否现在启动 Docker 服务？" "y" START_DOCKER
-
-        if [ "$START_DOCKER" = true ]; then
-            print_info "正在启动 Docker 服务..."
-
-            # 创建必要的目录
-            mkdir -p log
-
-            # 检查是否使用 docker-compose 或 docker compose
-            if command -v docker-compose &> /dev/null; then
-                COMPOSE_CMD="docker-compose"
-            else
-                COMPOSE_CMD="docker compose"
-            fi
-
-            # 启动服务
-            $COMPOSE_CMD up -d
-
-            print_success "Docker 服务已启动"
-            print_info "查看日志: $COMPOSE_CMD logs -f embybot"
-            print_info "停止服务: $COMPOSE_CMD down"
-            print_info "重启服务: $COMPOSE_CMD restart embybot"
-        fi
+    # 检查是否使用 docker-compose 或 docker compose
+    if command -v docker-compose &> /dev/null; then
+        COMPOSE_CMD="docker-compose"
     else
-        print_info "检测到使用本地部署模式"
+        COMPOSE_CMD="docker compose"
+    fi
 
-        # 检查 Python 是否安装
-        if ! command -v python3 &> /dev/null; then
-            print_error "未检测到 Python 3，请先安装 Python 3.8+"
-            exit 1
-        fi
+    read_yes_no "是否现在启动 Docker 服务？" "y" START_DOCKER
 
-        read_yes_no "是否现在安装 Python 依赖？" "y" INSTALL_DEPS
+    if [ "$START_DOCKER" = true ]; then
+        print_info "正在启动 Docker 服务..."
 
-        if [ "$INSTALL_DEPS" = true ]; then
-            print_info "正在安装依赖..."
-            pip3 install -r requirements.txt
-            print_success "依赖安装完成"
-        fi
+        # 创建必要的目录
+        mkdir -p log
 
-        read_yes_no "是否现在启动 Bot？" "y" START_BOT
+        # 启动服务
+        $COMPOSE_CMD up -d
 
-        if [ "$START_BOT" = true ]; then
-            print_info "正在启动 EmbyBot..."
-            print_warning "提示: 使用 Ctrl+C 停止，建议使用 screen 或 systemd 管理服务"
-            sleep 2
-            python3 main.py
-        fi
+        print_success "Docker 服务已启动"
     fi
 
     # ==================== 完成 ====================
@@ -651,18 +597,13 @@ EOF
     print_info "重要提示："
     echo "  1. 配置文件位置: ./config.json"
     echo "  2. 日志目录: ./log"
-    if [ "$USE_DOCKER" = true ]; then
-        echo "  3. 管理命令:"
-        echo "     - 查看日志: $COMPOSE_CMD logs -f embybot"
-        echo "     - 重启服务: $COMPOSE_CMD restart embybot"
-        echo "     - 停止服务: $COMPOSE_CMD down"
-        echo "     - 更新镜像: $COMPOSE_CMD pull && $COMPOSE_CMD up -d"
-    else
-        echo "  3. 启动命令: python3 main.py"
-        echo "  4. 建议使用 systemd 或 screen 管理服务"
-    fi
+    echo "  3. 管理命令:"
+    echo "     - 查看日志: $COMPOSE_CMD logs -f embybot"
+    echo "     - 重启服务: $COMPOSE_CMD restart embybot"
+    echo "     - 停止服务: $COMPOSE_CMD down"
+    echo "     - 更新镜像: $COMPOSE_CMD pull && $COMPOSE_CMD up -d"
     if [ "$API_STATUS" = true ]; then
-        echo "  5. API 访问地址: http://$API_HOST:$API_PORT"
+        echo "  4. API 访问地址: http://$API_HOST:$API_PORT"
     fi
     echo ""
     print_info "遇到问题？查看文档: https://github.com/OmniHelm/Emby-bot"

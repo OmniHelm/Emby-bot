@@ -35,6 +35,7 @@ bot/
 │   └── moviepilot.py      # MoviePilot 集成
 ├── sql_helper/             # 数据库操作
 │   ├── sql_emby.py        # Emby 用户表操作
+│   ├── sql_server_bindings.py  # 用户-服务器绑定表操作
 │   ├── sql_code.py        # 邀请码表操作
 │   └── sql_favorites.py   # 收藏记录表操作
 ├── schemas/                # 数据模型
@@ -58,11 +59,40 @@ bot/
 
 #### 数据库架构
 - 使用 SQLAlchemy ORM
-- 主要表:
-  - `emby`: 用户表 (tg, embyid, name, pwd, lv, cr, ex 等)
-  - `code`: 邀请码表
-  - `favorites`: 收藏记录表
 - 会话管理在 `bot/sql_helper/__init__.py`
+- 完整表结构见 `schema.sql`
+
+**主要表：**
+
+| 表名 | 说明 | 主键 |
+|------|------|------|
+| `emby` | TG 用户表 | tg |
+| `emby_server_bindings` | 用户-服务器绑定表 | (tg, server_id) |
+| `emby2` | 非 TG 用户表 | embyid |
+| `Rcode` | 注册码表 | code |
+| `emby_favorites` | 收藏记录表 | id |
+| `request_records` | 求片记录表 | download_id |
+
+**多服务器设计（一号通用模式）：**
+```
+emby 表（用户基础信息）
+├── tg (主键)
+├── embyid (首次注册的服务器，向后兼容)
+├── name, pwd, pwd2 (所有服务器统一)
+├── lv, cr, ex (所有服务器统一)
+└── us, iv (积分/币，全局)
+
+emby_server_bindings 表（多服务器绑定）
+├── tg + server_id (联合主键)
+├── embyid (该服务器上的 Emby ID)
+├── is_primary (是否主服务器)
+└── enabled (是否启用)
+```
+
+**业务流程：**
+1. 用户注册 → 写入 `emby` 表 + 所有启用服务器的 `emby_server_bindings`
+2. 续期/封禁 → 更新 `emby.ex/lv`，同步操作所有绑定服务器
+3. 查询用户 → `emby` 获取基础信息，`emby_server_bindings` 获取各服务器 embyid
 
 #### Emby API 交互
 - `Embyservice` 单例类封装所有 Emby API 操作 (`bot/func_helper/emby.py`)

@@ -1,4 +1,4 @@
-# EmbyBot 一键部署指南
+# EmbyBot 部署指南
 
 ## 快速开始
 
@@ -27,14 +27,13 @@
 #### ✅ 自动配置
 - **基础配置**: Bot Token、API ID/Hash、拥有者 ID
 - **Emby 配置**: 服务器地址、API Key、访问线路
-- **数据库配置**: 自动适配 Docker/本地模式
+- **数据库配置**: 自动适配 Docker 模式
 - **功能开关**: 签到、兑换、白名单等功能
 - **定时任务**: 榜单生成、到期检测、数据库备份
 - **高级功能**: MoviePilot 集成、代理配置、Web API
 
 #### ✅ 自动部署
 - **Docker 模式**: 自动启动 docker-compose 服务
-- **本地模式**: 自动安装依赖并启动 Bot
 
 #### ✅ 安全特性
 - 自动备份现有配置文件
@@ -93,9 +92,7 @@
 | 低活跃度检测 | `schedall.low_activity` | 检测不活跃用户 |
 | 数据库备份 | `schedall.backup_db` | 定时备份数据库 |
 
-## 部署模式
-
-### Docker 部署（推荐）
+## Docker 部署
 
 **优点**:
 - ✅ 环境隔离，依赖完整
@@ -115,7 +112,6 @@ systemctl enable docker
 **使用脚本部署**:
 ```bash
 ./deploy.sh
-# 选择 "是否使用 Docker 部署？" → 输入 y
 ```
 
 **手动管理**:
@@ -135,71 +131,6 @@ docker-compose down
 # 更新镜像
 docker-compose pull
 docker-compose up -d
-```
-
-### 本地部署
-
-**优点**:
-- ✅ 开发调试方便
-- ✅ 资源占用更少
-
-**前置要求**:
-```bash
-# Python 3.8 或更高版本
-python3 --version
-
-# pip
-pip3 --version
-```
-
-**使用脚本部署**:
-```bash
-./deploy.sh
-# 选择 "是否使用 Docker 部署？" → 输入 n
-```
-
-**手动部署**:
-```bash
-# 安装依赖
-pip3 install -r requirements.txt
-
-# 运行 Bot
-python3 main.py
-```
-
-**使用 systemd 管理服务**:
-
-创建服务文件 `/etc/systemd/system/embybot.service`:
-```ini
-[Unit]
-Description=EmbyBot Telegram Bot
-After=network.target mysql.service
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/Emby-bot
-ExecStart=/usr/bin/python3 /root/Emby-bot/main.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-管理命令:
-```bash
-# 启动服务
-systemctl start embybot
-
-# 开机自启
-systemctl enable embybot
-
-# 查看状态
-systemctl status embybot
-
-# 查看日志
-journalctl -u embybot -f
 ```
 
 ## 常见问题
@@ -223,24 +154,14 @@ journalctl -u embybot -f
 
 ### 4. 数据库连接失败？
 
-**Docker 模式**:
 - 确保 `db_host` 设置为 `mysql`（容器名）
 - 检查 `docker-compose.yml` 中的数据库配置是否匹配
-
-**本地模式**:
-- 确保 MySQL 服务已启动
-- 检查用户名、密码、数据库名是否正确
-- 确保数据库已创建：`CREATE DATABASE embybot CHARACTER SET utf8mb4;`
 
 ### 5. Bot 无法启动？
 
 1. **检查日志**:
    ```bash
-   # Docker 模式
    docker-compose logs -f embybot
-
-   # 本地模式
-   tail -f log/bot.log
    ```
 
 2. **常见错误**:
@@ -260,18 +181,10 @@ cp config.json config.json.backup
 
 ### 7. 如何更新 Bot？
 
-**Docker 模式**:
 ```bash
 git pull
 docker-compose pull
 docker-compose up -d
-```
-
-**本地模式**:
-```bash
-git pull
-pip3 install -r requirements.txt --upgrade
-systemctl restart embybot  # 或 python3 main.py
 ```
 
 ### 8. 如何启用 MoviePilot 集成？
@@ -350,8 +263,6 @@ systemctl restart embybot  # 或 python3 main.py
 
 ## 管理命令速查
 
-### Docker 模式
-
 | 命令 | 说明 |
 |------|------|
 | `docker-compose up -d` | 启动服务 |
@@ -360,16 +271,6 @@ systemctl restart embybot  # 或 python3 main.py
 | `docker-compose logs -f embybot` | 查看日志 |
 | `docker-compose pull` | 更新镜像 |
 | `docker exec -it embybot bash` | 进入容器 |
-
-### 本地模式 (systemd)
-
-| 命令 | 说明 |
-|------|------|
-| `systemctl start embybot` | 启动服务 |
-| `systemctl stop embybot` | 停止服务 |
-| `systemctl restart embybot` | 重启服务 |
-| `systemctl status embybot` | 查看状态 |
-| `journalctl -u embybot -f` | 查看日志 |
 
 ## 安全建议
 
@@ -398,7 +299,3 @@ systemctl restart embybot  # 或 python3 main.py
 - **项目主页**: [https://github.com/OmniHelm/Emby-bot](https://github.com/OmniHelm/Emby-bot)
 - **问题反馈**: [GitHub Issues](https://github.com/OmniHelm/Emby-bot/issues)
 - **文档**: 查看项目 `CLAUDE.md` 了解架构细节
-
----
-
-**祝使用愉快！** 🎉
