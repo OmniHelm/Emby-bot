@@ -5,10 +5,11 @@ from pyrogram import filters
 from bot import bot, owner, prefixes, extra_emby_libs, LOGGER, Now
 from bot.func_helper.msg_utils import sendMessage, deleteMessage
 from bot.sql_helper.sql_emby import get_all_emby, Emby
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 
 # embylibs_block
-@bot.on_message(filters.command('embylibs_blockall', prefixes) & filters.user(owner))
+@bot.on_message(filters.command('lib_hide_all', prefixes) & filters.user(owner))
 async def embylibs_blockall(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply(f"🍓 正在处理ing····, 正在更新所有用户的媒体库访问权限")
@@ -25,8 +26,15 @@ async def embylibs_blockall(_, msg):
         if i.embyid:
             allcount += 1
             try:
+                # 获取用户对应的服务实例（多服务器适配）
+                emby_service, server_config, user = get_user_emby_service(i.tg)
+                if not emby_service:
+                    LOGGER.warning(f"无法定位服务器: {i.name}")
+                    text += f'🌧️ 关闭失败 [{i.name}](tg://user?id={i.tg}) - 无法定位服务器\n'
+                    continue
+
                 # 使用封装的禁用所有媒体库方法
-                re = await emby.disable_all_folders_for_user(i.embyid)
+                re = await emby_service.disable_all_folders_for_user(i.embyid)
                 if re is True:
                     successcount += 1
                     text += f'已关闭了 [{i.name}](tg://user?id={i.tg}) 的媒体库权限\n'
@@ -51,7 +59,7 @@ async def embylibs_blockall(_, msg):
         f"【关闭媒体库任务结束】 - {msg.from_user.id} 共检索出 {allcount} 个账户，成功关闭 {successcount}个，耗时：{times:.3f}s")
 
 # embylibs_unblock
-@bot.on_message(filters.command('embylibs_unblockall', prefixes) & filters.user(owner))
+@bot.on_message(filters.command('lib_show_all', prefixes) & filters.user(owner))
 async def embylibs_unblockall(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply(f"🍓 正在处理ing····, 正在更新所有用户的媒体库访问权限")
@@ -68,8 +76,15 @@ async def embylibs_unblockall(_, msg):
         if i.embyid:
             allcount += 1
             try:
+                # 获取用户对应的服务实例（多服务器适配）
+                emby_service, server_config, user = get_user_emby_service(i.tg)
+                if not emby_service:
+                    LOGGER.warning(f"无法定位服务器: {i.name}")
+                    text += f'🌧️ 开启失败 [{i.name}](tg://user?id={i.tg}) - 无法定位服务器\n'
+                    continue
+
                 # 使用封装的启用所有媒体库方法
-                re = await emby.enable_all_folders_for_user(i.embyid)
+                re = await emby_service.enable_all_folders_for_user(i.embyid)
                 if re is True:
                     successcount += 1
                     text += f'已开启了 [{i.name}](tg://user?id={i.tg}) 的媒体库权限\n'
@@ -93,7 +108,7 @@ async def embylibs_unblockall(_, msg):
     LOGGER.info(
         f"【开启媒体库任务结束】 - {msg.from_user.id} 共检索出 {allcount} 个账户，成功开启 {successcount}个，耗时：{times:.3f}s")
 
-@bot.on_message(filters.command('extraembylibs_blockall', prefixes) & filters.user(owner))
+@bot.on_message(filters.command('lib_extra_hide', prefixes) & filters.user(owner))
 async def extraembylibs_blockall(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply(f"🍓 正在处理ing····, 正在更新所有用户的额外媒体库访问权限")
@@ -112,8 +127,15 @@ async def extraembylibs_blockall(_, msg):
         if i.embyid:
             allcount += 1
             try:
+                # 获取用户对应的服务实例（多服务器适配）
+                emby_service, server_config, user = get_user_emby_service(i.tg)
+                if not emby_service:
+                    LOGGER.warning(f"无法定位服务器: {i.name}")
+                    text += f'🌧️ 关闭失败 [{i.name}](tg://user?id={i.tg}) - 无法定位服务器\n'
+                    continue
+
                 # 使用封装的隐藏额外媒体库方法
-                re = await emby.hide_folders_by_names(i.embyid, extra_emby_libs)
+                re = await emby_service.hide_folders_by_names(i.embyid, extra_emby_libs)
                 if re is True:
                     successcount += 1
                     text += f'已关闭了 [{i.name}](tg://user?id={i.tg}) 的额外媒体库权限\n'
@@ -138,7 +160,7 @@ async def extraembylibs_blockall(_, msg):
         f"【关闭额外媒体库任务结束】 - {msg.from_user.id} 共检索出 {allcount} 个账户，成功关闭 {successcount}个，耗时：{times:.3f}s")
 
 
-@bot.on_message(filters.command('extraembylibs_unblockall', prefixes) & filters.user(owner))
+@bot.on_message(filters.command('lib_extra_show', prefixes) & filters.user(owner))
 async def extraembylibs_unblockall(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply(f"🍓 正在处理ing····, 正在更新所有用户的额外媒体库访问权限")
@@ -157,8 +179,15 @@ async def extraembylibs_unblockall(_, msg):
         if i.embyid:
             allcount += 1
             try:
+                # 获取用户对应的服务实例（多服务器适配）
+                emby_service, server_config, user = get_user_emby_service(i.tg)
+                if not emby_service:
+                    LOGGER.warning(f"无法定位服务器: {i.name}")
+                    text += f'🌧️ 开启失败 [{i.name}](tg://user?id={i.tg}) - 无法定位服务器\n'
+                    continue
+
                 # 使用封装的显示额外媒体库方法
-                re = await emby.show_folders_by_names(i.embyid, extra_emby_libs)
+                re = await emby_service.show_folders_by_names(i.embyid, extra_emby_libs)
                 if re is True:
                     successcount += 1
                     text += f'已开启了 [{i.name}](tg://user?id={i.tg}) 的额外媒体库权限\n'

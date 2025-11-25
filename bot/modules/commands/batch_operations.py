@@ -14,7 +14,7 @@ from bot.func_helper.filters import admins_on_filter
 from bot.sql_helper.sql_emby import get_all_emby, Emby, sql_update_embys, sql_clear_emby_iv
 
 
-@bot.on_message(filters.command('renewall', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('renew_all', prefixes) & admins_on_filter)
 async def renew_all(_, msg):
     await deleteMessage(msg)
     # send_chat
@@ -22,7 +22,7 @@ async def renew_all(_, msg):
         a = float(msg.command[1])
     except (IndexError, ValueError):
         return await sendMessage(msg,
-                                 "🔔 **使用格式：**/renewall [+/-天数]\n\n  给所有未封禁emby [+/-天数]", timer=60)
+                                 "🔔 **使用格式：**/renew_all [+/-天数]\n\n  给所有未封禁emby [+/-天数]", timer=60)
 
     send = await bot.send_photo(msg.chat.id, photo=bot_photo, caption="⚡【派送任务】\n  **正在开启派送中...请稍后**")
     rst = get_all_emby(Emby.lv == 'b')
@@ -57,7 +57,7 @@ async def renew_all(_, msg):
 
 
 # coinsall 全部人加硬币
-@bot.on_message(filters.command('coinsall', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('coins_all', prefixes) & admins_on_filter)
 async def coins_all(_, msg):
     await deleteMessage(msg)
     try:
@@ -70,7 +70,7 @@ async def coins_all(_, msg):
             send_msg = send_msg_param == 'true'
     except (IndexError, ValueError):
         return await sendMessage(msg,
-                                 f"🔔 **使用格式：**/coinsall [+/-数量] [等级] [发送消息]\n\n给指定等级的用户 [+/- {credits}]\n示例： `/coinsall 100 b` 给所有b级用户加100{credits}\n示例： `/coinsall 100 b true` 给所有b级用户加100{credits}并私发消息\n等级说明:\na- 白名单账户\nb- 正常账户\nc- 已封禁账户\n发送消息参数：true 表示发送私信，默认不发送\n", timer=60)
+                                 f"🔔 **使用格式：**/coins_all [+/-数量] [等级] [发送消息]\n\n给指定等级的用户 [+/- {credits}]\n示例： `/coins_all 100 b` 给所有b级用户加100{credits}\n示例： `/coins_all 100 b true` 给所有b级用户加100{credits}并私发消息\n等级说明:\na- 白名单账户\nb- 正常账户\nc- 已封禁账户\n发送消息参数：true 表示发送私信，默认不发送\n", timer=60)
     send = await bot.send_photo(msg.chat.id, photo=bot_photo,
                                 caption=f"⚡【{credits}任务】\n  **正在开启派送{credits}中...请稍后**")
     rst = get_all_emby(Emby.lv == lv)
@@ -119,7 +119,7 @@ async def coins_all(_, msg):
         await msg.reply("数据库操作出错，请检查重试")
 
 # coinsclear 清除用户币币
-@bot.on_message(filters.command('coinsclear', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('coins_clear', prefixes) & admins_on_filter)
 async def coinsclear(_, msg):
     await deleteMessage(msg)
     try:
@@ -127,12 +127,12 @@ async def coinsclear(_, msg):
         confirm_param = msg.command[2].lower() if len(msg.command) > 2 else None
     except (IndexError, ValueError):
         return await sendMessage(msg,
-                                 f"🔔 **使用格式：**\n\n`/coinsclear [等级/all] true`\n\n清除指定等级用户的币币\n等级说明:\na- 白名单账户\nb - 正常账户\nc- 已封禁账户\nd- 无账号用户\n\n示例：\n`/coinsclear all true` - 清除所有用户币币\n`/coinsclear a true` - 清除a级用户币币\n`/coinsclear b true` - 清除b级用户币币\n`/coinsclear c true` - 清除c级用户币币\n`/coinsclear d true` - 清除d级用户币币", timer=60)
+                                 f"🔔 **使用格式：**\n\n`/coins_clear [等级/all] true`\n\n清除指定等级用户的币币\n等级说明:\na- 白名单账户\nb - 正常账户\nc- 已封禁账户\nd- 无账号用户\n\n示例：\n`/coins_clear all true` - 清除所有用户币币\n`/coins_clear a true` - 清除a级用户币币\n`/coins_clear b true` - 清除b级用户币币\n`/coins_clear c true` - 清除c级用户币币\n`/coins_clear d true` - 清除d级用户币币", timer=60)
     
     # 验证第二个参数必须是 true
     if confirm_param != 'true':
         return await sendMessage(msg,
-                                 f"🔔 **使用格式：**\n\n`/coinsclear [等级/all] true`\n\n⚠️ 第二个参数必须是 `true` 才能执行清除操作\n\n示例：\n`/coinsclear all true` - 清除所有用户币币\n`/coinsclear b true` - 清除b级用户币币", timer=60)
+                                 f"🔔 **使用格式：**\n\n`/coins_clear [等级/all] true`\n\n⚠️ 第二个参数必须是 `true` 才能执行清除操作\n\n示例：\n`/coins_clear all true` - 清除所有用户币币\n`/coins_clear b true` - 清除b级用户币币", timer=60)
     
     sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
     
@@ -173,8 +173,8 @@ async def coinsclear(_, msg):
             LOGGER.error(f"【清除{credits}任务】 - {sign_name}({msg.from_user.id}) 清除{lv}级用户币币失败")
     else:
         return await sendMessage(msg,
-                                 f"🔔 **使用格式：**\n\n`/coinsclear [等级/all] true`\n\n⚠️ 等级参数必须是：`all`、`a`、`b`、`c` 或 `d`\n\n等级说明:\na- 白名单账户\nb - 正常账户\nc- 已封禁账户\nd- 无账号用户\n\n示例：\n`/coinsclear all true` - 清除所有用户币币\n`/coinsclear b true` - 清除b级用户币币", timer=60)
-@bot.on_message(filters.command('callall', prefixes) & admins_on_filter & filters.private)
+                                 f"🔔 **使用格式：**\n\n`/coins_clear [等级/all] true`\n\n⚠️ 等级参数必须是：`all`、`a`、`b`、`c` 或 `d`\n\n等级说明:\na- 白名单账户\nb - 正常账户\nc- 已封禁账户\nd- 无账号用户\n\n示例：\n`/coins_clear all true` - 清除所有用户币币\n`/coins_clear b true` - 清除b级用户币币", timer=60)
+@bot.on_message(filters.command('broadcast', prefixes) & admins_on_filter & filters.private)
 async def call_all(_, msg):
     await msg.delete()
     # 可以做分级 所有 b类 非群组类 ：太麻烦，随便搞搞就行

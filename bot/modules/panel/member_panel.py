@@ -11,9 +11,10 @@ import math
 import random
 from datetime import timedelta, datetime
 from bot.schemas import ExDate, Yulv
-from bot import bot, LOGGER, _open, emby_line, credits, ranks, group, extra_emby_libs, config, bot_name, schedall
+from bot import bot, LOGGER, _open, credits, ranks, group, extra_emby_libs, config, bot_name, schedall
 from pyrogram import filters
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service, get_user_emby_line, get_user_emby_services
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.filters import user_in_group_on_filter
 from bot.func_helper.utils import members_info, tem_adduser, cr_link_one, judge_admins, tem_deluser, pwd_create
 from bot.func_helper.fix_bottons import members_ikb, back_members_ikb, re_create_ikb, del_me_ikb, re_delme_ikb, \
@@ -25,6 +26,10 @@ from bot.modules.commands.exchange import rgs_code
 from bot.sql_helper.sql_code import sql_count_c_code
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby, sql_delete_emby
 from bot.sql_helper.sql_emby2 import sql_get_emby2, sql_delete_emby2
+from bot.sql_helper.sql_server_bindings import (
+    add_binding, get_binding, get_primary_binding, get_user_bindings,
+    delete_user_bindings, set_primary_binding
+)
 
 # 导入新的优化模块
 from bot.constants.messages import Messages, ErrorMessages
@@ -84,12 +89,24 @@ async def create_user(_, call, us, stats):
             tracker.next_step()
             await editMessage(send, tracker.format_progress("正在连接..."))
 
+            # 多服务器适配：使用第一个可用的服务器（新用户创建）
+            all_servers = emby_manager.get_all_servers()
+            if not all_servers:
+                error_text = "❌ 没有可用的 Emby 服务器"
+                await editMessage(send, error_text, re_create_ikb)
+                LOGGER.error("【创建账户】：没有可用的服务器！")
+                return
+
+            # 使用第一个服务器创建账户
+            emby_service = list(all_servers.values())[0]
+            server_id = list(all_servers.keys())[0]
+
             # 步骤3：创建账户
             tracker.next_step()
             await editMessage(send, tracker.format_progress("正在创建..."))
 
             # emby api操作
-            data = await emby.emby_create(name=emby_name, days=us)
+            data = await emby_service.emby_create(name=emby_name, days=us)
             if not data:
                 # 使用优化的错误消息
                 error_text = ErrorMessages.create_failed("username_exists")
@@ -112,6 +129,9 @@ async def create_user(_, call, us, stats):
                 else:
                     sql_update_emby(Emby.tg == tg, embyid=eid, name=emby_name, pwd=pwd, pwd2=emby_pwd2, lv='b', cr=datetime.now(), ex=ex, us=0)
 
+                # 写入服务器绑定表
+                add_binding(tg, server_id, eid, is_primary=True)
+
                 # 在锁内更新计数器
                 tem_adduser()
 
@@ -124,6 +144,8 @@ async def create_user(_, call, us, stats):
                     expiry_text = '__无需保号，放心食用__'
 
                 # 使用优化的成功消息（保留原有格式但更清晰）
+                # 根据服务器获取对应线路
+                user_line = get_user_emby_line(server_id, 'b')
                 success_text = f"""
 🎉 **账户创建成功！**
 
@@ -144,7 +166,7 @@ async def create_user(_, call, us, stats):
    {expiry_text}
 
 🌐 **服务器线路**
-{emby_line}
+{user_line}
 
 ---
 
@@ -273,14 +295,26 @@ async def change_tg(_, call):
 
         # 将原账号的币值转移到新账号
         old_iv = e.iv
+        # 从绑定表获取原用户的服务器信息
+        old_binding = get_primary_binding(replace_id)
+        old_server_id = old_binding.server_id if old_binding else 'main'
+
         if sql_update_emby(Emby.tg == current_id, embyid=e.embyid, name=e.name, pwd=e.pwd, pwd2=e.pwd2,
                            lv=e.lv, cr=e.cr, ex=e.ex, iv=old_iv):
+            # 转移绑定关系：删除原用户绑定，为新用户创建绑定
+            old_bindings = get_user_bindings(replace_id)
+            delete_user_bindings(replace_id)
+            for ob in old_bindings:
+                add_binding(current_id, ob.server_id, ob.embyid, is_primary=ob.is_primary)
+
+            # 根据服务器获取对应线路
+            user_line = get_user_emby_line(old_server_id, e.lv)
             text = f'⭕ 请接收您的信息！\n\n' \
                    f'· 用户名称 | `{e.name}`\n' \
                    f'· 用户密码 | `{e.pwd}`\n' \
                    f'· 安全密码 | `{e.pwd2}`（仅发送一次）\n' \
                    f'· 到期时间 | `{e.ex}`\n\n' \
-                   f'· 当前线路：\n{emby_line}\n\n' \
+                   f'· 当前线路：\n{user_line}\n\n' \
                    f'**·在【服务器】按钮 - 查看线路和密码**'
             await bot.send_message(current_id, text)
             LOGGER.info(
@@ -331,20 +365,34 @@ async def change_tg(_, call):
                 return await editMessage(call, f'❓ 未查询到bot数据中名为 {emby_name} 的账户，请使用 **绑定TG** 功能。',
                                          buttons=re_bindtg_ikb)
             if emby_pwd != e2.pwd2:
-                success, embyid = await emby.authority_account(tg_id=call.from_user.id, username=emby_name, password=emby_pwd)
+                # 多服务器适配：遍历所有服务器验证凭证
+                all_servers = emby_manager.get_all_servers()
+                success = False
+                embyid = None
+                for server_id, emby_service in all_servers.items():
+                    try:
+                        success, embyid = await emby_service.authority_account(tg_id=call.from_user.id, username=emby_name, password=emby_pwd)
+                        if success:
+                            break
+                    except Exception as ex:
+                        LOGGER.warning(f"验证服务器 {server_id} 失败: {ex}")
                 if not success:
                     return await editMessage(call,
                                              f'💢 安全码or密码验证错误，请检查输入\n{emby_name} {emby_pwd} 是否正确。',
                                              buttons=re_changetg_ikb)
+                # 写入用户信息和绑定
                 sql_update_emby(Emby.tg == call.from_user.id, embyid=embyid, name=e2.name, pwd=emby_pwd,
                                 pwd2=e2.pwd2, lv=e2.lv, cr=e2.cr, ex=e2.ex)
+                add_binding(call.from_user.id, server_id, embyid, is_primary=True)
                 sql_delete_emby2(embyid=e2.embyid)
+                # 根据验证成功的服务器获取对应线路
+                user_line = get_user_emby_line(server_id, e2.lv)
                 text = f'⭕ 账户 {emby_name} 的密码验证成功！\n\n' \
                        f'· 用户名称 | `{emby_name}`\n' \
                        f'· 用户密码 | `{pwd[0]}`\n' \
                        f'· 安全密码 | `{e2.pwd2}`（仅发送一次）\n' \
                        f'· 到期时间 | `{e2.ex}`\n\n' \
-                       f'· 当前线路：\n{emby_line}\n\n' \
+                       f'· 当前线路：\n{user_line}\n\n' \
                        f'**·在【服务器】按钮 - 查看线路和密码**'
                 await sendMessage(call,
                                   f'⭕#TG改绑 原emby账户 #{emby_name}\n\n'
@@ -354,15 +402,20 @@ async def change_tg(_, call):
                 await editMessage(call, text)
 
             elif emby_pwd == e2.pwd2:
+                # emby2 表中的 server_id
+                e2_server_id = e2.server_id if hasattr(e2, 'server_id') else 'main'
+                # 根据服务器获取对应线路
+                user_line = get_user_emby_line(e2_server_id, e2.lv)
                 text = f'⭕ 账户 {emby_name} 的安全码验证成功！\n\n' \
                        f'· 用户名称 | `{emby_name}`\n' \
                        f'· 用户密码 | `{e2.pwd}`\n' \
                        f'· 安全密码 | `{pwd[1]}`（仅发送一次）\n' \
                        f'· 到期时间 | `{e2.ex}`\n\n' \
-                       f'· 当前线路：\n{emby_line}\n\n' \
+                       f'· 当前线路：\n{user_line}\n\n' \
                        f'**·在【服务器】按钮 - 查看线路和密码**'
                 sql_update_emby(Emby.tg == call.from_user.id, embyid=e2.embyid, name=e2.name, pwd=e2.pwd,
                                 pwd2=emby_pwd, lv=e2.lv, cr=e2.cr, ex=e2.ex)
+                add_binding(call.from_user.id, e2_server_id, e2.embyid, is_primary=True)
                 sql_delete_emby2(embyid=e2.embyid)
                 await sendMessage(call,
                                   f'⭕#TG改绑 原emby账户 #{emby_name}\n\n'
@@ -374,7 +427,17 @@ async def change_tg(_, call):
         else:
             if call.from_user.id == e.tg: return await editMessage(call, '⚠️ 您已经拥有账户。')
             if emby_pwd != e.pwd2:
-                success, embyid = await emby.authority_account(tg_id=call.from_user.id, username=emby_name, password=emby_pwd)
+                # 多服务器适配：遍历所有服务器验证凭证
+                all_servers = emby_manager.get_all_servers()
+                success = False
+                embyid = None
+                for server_id, emby_service in all_servers.items():
+                    try:
+                        success, embyid = await emby_service.authority_account(tg_id=call.from_user.id, username=emby_name, password=emby_pwd)
+                        if success:
+                            break
+                    except Exception as ex:
+                        LOGGER.warning(f"验证服务器 {server_id} 失败: {ex}")
                 if not success:
                     return await editMessage(call,
                                              f'💢 安全码or密码验证错误，请检查输入\n{emby_name} {emby_pwd} 是否正确。',
@@ -428,7 +491,17 @@ async def bind_tg(_, call):
         if e is None:
             e2 = sql_get_emby2(name=emby_name)
             if e2 is None:
-                success, embyid = await emby.authority_account(tg_id=call.from_user.id, username=emby_name, password=emby_pwd)
+                # 多服务器适配：遍历所有服务器验证凭证
+                all_servers = emby_manager.get_all_servers()
+                success = False
+                embyid = None
+                for server_id, emby_service in all_servers.items():
+                    try:
+                        success, embyid = await emby_service.authority_account(tg_id=call.from_user.id, username=emby_name, password=emby_pwd)
+                        if success:
+                            break
+                    except Exception as ex:
+                        LOGGER.warning(f"验证服务器 {server_id} 失败: {ex}")
                 if not success:
                     return await editMessage(call,
                                              f'🍥 很遗憾绑定失败，您输入的账户密码不符（{emby_name} - {emby_pwd}），请仔细确认后再次尝试',
@@ -437,15 +510,19 @@ async def bind_tg(_, call):
                     security_pwd = await pwd_create(4)
                     pwd = ['空（直接回车）', security_pwd] if emby_pwd == 'None' else [emby_pwd, emby_pwd]
                     ex = (datetime.now() + timedelta(days=30))
+                    # 根据验证成功的服务器获取对应线路
+                    user_line = get_user_emby_line(server_id, 'b')
                     text = f'✅ 账户 {emby_name} 成功绑定\n\n' \
                            f'· 用户名称 | `{emby_name}`\n' \
                            f'· 用户密码 | `{pwd[0]}`\n' \
                            f'· 安全密码 | `{pwd[1]}`（仅发送一次）\n' \
                            f'· 到期时间 | `{ex}`\n\n' \
-                           f'· 当前线路：\n{emby_line}\n\n' \
+                           f'· 当前线路：\n{user_line}\n\n' \
                            f'· **在【服务器】按钮 - 查看线路和密码**'
+                    # 写入用户信息和绑定
                     sql_update_emby(Emby.tg == call.from_user.id, embyid=embyid, name=emby_name, pwd=pwd[0],
                                     pwd2=pwd[1], lv='b', cr=datetime.now(), ex=ex)
+                    add_binding(call.from_user.id, server_id, embyid, is_primary=True)
                     await editMessage(call, text)
                     await sendMessage(call,
                                       f'⭕#新TG绑定 原emby账户 #{emby_name} \n\n已绑定至 [{call.from_user.first_name}](tg://user?id={call.from_user.id}) - {call.from_user.id}',
@@ -498,18 +575,37 @@ async def del_emby(_, call):
         return
 
     embyid = call.data.split('-')[1]
-    if await emby.emby_del(emby_id=embyid):
-        sql_update_emby(Emby.embyid == embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
+
+    # 多服务器适配：对用户绑定的所有服务器执行删除
+    from bot.func_helper.emby_utils import get_user_emby_services
+    services = get_user_emby_services(call.from_user.id)
+    if not services:
+        await editMessage(call, '❌ 未找到您的服务器绑定记录', buttons=back_members_ikb)
+        return
+
+    delete_ok = False
+    for svc, server_cfg, bind_eid in services:
+        try:
+            if await svc.emby_del(emby_id=bind_eid):
+                delete_ok = True
+            else:
+                LOGGER.warning(f"删除服务器 {server_cfg.id} 上的账号失败: embyid={bind_eid}")
+        except Exception as ex:
+            LOGGER.warning(f"删除服务器 {server_cfg.id} 上的账号异常: embyid={bind_eid}, err={ex}")
+
+    if delete_ok:
+        # 清空数据库记录并删除所有绑定
+        sql_update_emby(Emby.tg == call.from_user.id, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
+        delete_user_bindings(call.from_user.id)
         tem_deluser()
-        send1 = await editMessage(call, '🗑️ 好了，已经为您删除...\n愿来日各自安好，山高水长，我们有缘再见！',
+        send1 = await editMessage(call, '🗑️ 好了，已为您删除所有绑定服务器的账户。\n愿来日各自安好，山高水长，我们有缘再见！',
                                   buttons=back_members_ikb)
         if send1 is False:
             return
-
-        LOGGER.info(f"【删除账号】：{call.from_user.id} 已删除！")
+        LOGGER.info(f"【删除账号】：{call.from_user.id} 已删除所有绑定服务器账号")
     else:
         await editMessage(call, '🥧 蛋糕辣~ 好像哪里出问题了，请向管理反应', buttons=back_members_ikb)
-        LOGGER.error(f"【删除账号】：{call.from_user.id} 失败！")
+        LOGGER.error(f"【删除账号】：{call.from_user.id} 失败（所有服务器删除均未成功）")
 
 
 # 重置密码为空密码
@@ -548,24 +644,56 @@ async def reset(_, call):
 
                 elif mima.text == '/cancel':
                     await mima.delete()
-                    await editMessage(call, '**🎯 收到，正在重置ing。。。**')
-                    if await emby.emby_reset(emby_id=e.embyid) is True:
-                        await editMessage(call, '🕶️ 操作完成！已为您重置密码为 空。', buttons=back_members_ikb)
-                        LOGGER.info(f"【重置密码】：{call.from_user.id} 成功重置了空密码！")
+                    await editMessage(call, '**🎯 收到，正在重置ing（将对所有绑定服务器生效）。。。**')
+
+                    # 多服务器：对所有绑定服务器重置为空密码
+                    services = get_user_emby_services(call.from_user.id)
+                    if not services:
+                        await editMessage(call, '❌ 未找到服务器绑定记录', buttons=back_members_ikb)
+                        return
+
+                    any_success = False
+                    for svc, server_cfg, bind_eid in services:
+                        try:
+                            if await svc.emby_reset(emby_id=bind_eid) is True:
+                                any_success = True
+                            else:
+                                LOGGER.warning(f"重置空密码失败 server={server_cfg.id} embyid={bind_eid}")
+                        except Exception as ex:
+                            LOGGER.warning(f"重置空密码异常 server={server_cfg.id} embyid={bind_eid}: {ex}")
+                    if any_success:
+                        await editMessage(call, '🕶️ 操作完成！已为您重置所有绑定服务器的密码为 空。', buttons=back_members_ikb)
+                        LOGGER.info(f"【重置密码】：{call.from_user.id} 成功重置空密码（全部绑定服务器）")
                     else:
-                        await editMessage(call, '🫥 重置密码操作失败！请联系管理员。')
-                        LOGGER.error(f"【重置密码】：{call.from_user.id} 重置密码失败 ！")
+                        await editMessage(call, '🫥 重置密码操作失败！请联系管理员。', buttons=back_members_ikb)
+                        LOGGER.error(f"【重置密码】：{call.from_user.id} 重置密码失败（全部绑定服务器）")
 
                 else:
                     await mima.delete()
-                    await editMessage(call, '**🎯 收到，正在重置ing。。。**')
-                    if await emby.emby_reset(emby_id=e.embyid, new_password=mima.text) is True:
-                        await editMessage(call, f'🕶️ 操作完成！已为您重置密码为 `{mima.text}`。',
+                    await editMessage(call, '**🎯 收到，正在重置ing（将对所有绑定服务器生效）。。。**')
+
+                    # 多服务器：对所有绑定服务器设置新密码
+                    services = get_user_emby_services(call.from_user.id)
+                    if not services:
+                        await editMessage(call, '❌ 未找到服务器绑定记录', buttons=back_members_ikb)
+                        return
+
+                    any_success = False
+                    for svc, server_cfg, bind_eid in services:
+                        try:
+                            if await svc.emby_reset(emby_id=bind_eid, new_password=mima.text) is True:
+                                any_success = True
+                            else:
+                                LOGGER.warning(f"重置新密码失败 server={server_cfg.id} embyid={bind_eid}")
+                        except Exception as ex:
+                            LOGGER.warning(f"重置新密码异常 server={server_cfg.id} embyid={bind_eid}: {ex}")
+                    if any_success:
+                        await editMessage(call, f'🕶️ 操作完成！已为您重置所有绑定服务器的密码为 `{mima.text}`。',
                                           buttons=back_members_ikb)
-                        LOGGER.info(f"【重置密码】：{call.from_user.id} 成功重置了密码为 {mima.text} ！")
+                        LOGGER.info(f"【重置密码】：{call.from_user.id} 成功重置密码（全部绑定服务器）为 {mima.text}")
                     else:
                         await editMessage(call, '🫥 操作失败！请联系管理员。', buttons=back_members_ikb)
-                        LOGGER.error(f"【重置密码】：{call.from_user.id} 重置密码失败 ！")
+                        LOGGER.error(f"【重置密码】：{call.from_user.id} 重置密码失败（全部绑定服务器）")
 
 
 # 显示/隐藏某些库
@@ -583,7 +711,13 @@ async def embyblocks(_, call):
         if send is False:
             return
     else:
-        success, rep = await emby.user(emby_id=data.embyid)
+        # 多服务器适配：获取用户对应的服务实例（以下显示状态取主服务器；操作将对所有绑定服务器生效）
+        emby_service, server_config, user_obj = get_user_emby_service(call.from_user.id)
+        if not emby_service:
+            await callAnswer(call, '❌ 无法连接到您所在的服务器', True)
+            return
+
+        success, rep = await emby_service.user(emby_id=data.embyid)
         try:
             if success is False:
                 stat = '💨 未知'
@@ -592,14 +726,14 @@ async def embyblocks(_, call):
                 policy = rep.get("Policy", {})
                 enable_all_folders = policy.get("EnableAllFolders")
                 enabled_folders = policy.get("EnabledFolders", [])
-                
+
                 if enable_all_folders:
                     # 如果启用所有文件夹，检查是否有特定的阻止设置
                     stat = '🟢 显示'
                 else:
                     # 检查目标媒体库是否在启用列表中
                     # 需要获取媒体库ID来进行比较
-                    target_folder_ids = await emby.get_folder_ids_by_names(config.emby_block)
+                    target_folder_ids = await emby_service.get_folder_ids_by_names(config.emby_block)
                     if target_folder_ids and any(folder_id in enabled_folders for folder_id in target_folder_ids):
                         stat = '🟢 显示'
                     else:
@@ -609,7 +743,8 @@ async def embyblocks(_, call):
         block = ", ".join(config.emby_block)
         await asyncio.gather(callAnswer(call, "✅ 到位"),
                              editMessage(call,
-                                         f'🤺 用户状态：{stat}\n🎬 目前设定的库为: \n\n**{block}**\n\n请选择你的操作。',
+                                         f'🤺 用户状态（主服务器）：{stat}\n🎬 目前设定的库为: \n\n**{block}**\n\n'
+                                         f'提示：下面的显/隐操作将对所有绑定服务器生效。',
                                          buttons=emby_block_ikb(data.embyid)))
 
 
@@ -620,20 +755,29 @@ async def user_emby_block(_, call):
     send = await callAnswer(call, f'🎬 正在为您关闭显示ing')
     if send is False:
         return
-    success, rep = await emby.user(emby_id=embyid)
-    if success:
+
+    # 多服务器：对所有绑定服务器隐藏
+    services = get_user_emby_services(call.from_user.id)
+    if not services:
+        await callAnswer(call, '❌ 未找到服务器绑定记录', True)
+        return
+
+    any_success = False
+    for svc, server_cfg, bind_eid in services:
         try:
-            # 使用封装的隐藏媒体库方法
-            re = await emby.hide_folders_by_names(embyid, config.emby_block)
+            re = await svc.hide_folders_by_names(bind_eid, config.emby_block)
             if re is True:
-                send1 = await editMessage(call, f'🕶️ ο(=•ω＜=)ρ⌒☆\n 小尾巴隐藏好了！ ', buttons=user_emby_block_ikb)
-                if send1 is False:
-                    return
+                any_success = True
             else:
-                await editMessage(call, f'🕶️ Error!\n 隐藏失败，请上报管理检查)', buttons=back_members_ikb)
+                LOGGER.warning(f"隐藏媒体库失败 server={server_cfg.id} embyid={bind_eid}")
         except Exception as e:
-            LOGGER.error(f"隐藏媒体库失败: {str(e)}")
-            await editMessage(call, f'🕶️ Error!\n 隐藏失败，请上报管理检查)', buttons=back_members_ikb)
+            LOGGER.error(f"隐藏媒体库失败 server={server_cfg.id} embyid={bind_eid}: {str(e)}")
+    if any_success:
+        send1 = await editMessage(call, f'🕶️ ο(=•ω＜=)ρ⌒☆\n 已对所有绑定服务器隐藏指定媒体库', buttons=user_emby_block_ikb)
+        if send1 is False:
+            return
+    else:
+        await editMessage(call, f'🕶️ Error!\n 隐藏失败，请上报管理检查)', buttons=back_members_ikb)
 
 
 # 显示
@@ -643,20 +787,29 @@ async def user_emby_unblock(_, call):
     send = await callAnswer(call, f'🎬 正在为您开启显示ing')
     if send is False:
         return
-    success, rep = await emby.user(emby_id=embyid)
-    if success:
+
+    # 多服务器：对所有绑定服务器显示
+    services = get_user_emby_services(call.from_user.id)
+    if not services:
+        await callAnswer(call, '❌ 未找到服务器绑定记录', True)
+        return
+
+    any_success = False
+    for svc, server_cfg, bind_eid in services:
         try:
-            # 使用封装的显示媒体库方法
-            re = await emby.show_folders_by_names(embyid, config.emby_block)
+            re = await svc.show_folders_by_names(bind_eid, config.emby_block)
             if re is True:
-                send1 = await editMessage(call, f'🕶️ ο(=•ω＜=)ρ⌒☆\n 小尾巴显示好了！ ', buttons=user_emby_unblock_ikb)
-                if send1 is False:
-                    return
+                any_success = True
             else:
-                await editMessage(call, f'🕶️ Error!\n 显示失败，请上报管理检查设置', buttons=back_members_ikb)
+                LOGGER.warning(f"显示媒体库失败 server={server_cfg.id} embyid={bind_eid}")
         except Exception as e:
-            LOGGER.error(f"显示媒体库失败: {str(e)}")
-            await editMessage(call, f'🕶️ Error!\n 显示失败，请上报管理检查设置', buttons=back_members_ikb)
+            LOGGER.error(f"显示媒体库失败 server={server_cfg.id} embyid={bind_eid}: {str(e)}")
+    if any_success:
+        send1 = await editMessage(call, f'🕶️ ο(=•ω＜=)ρ⌒☆\n 已对所有绑定服务器显示指定媒体库', buttons=user_emby_unblock_ikb)
+        if send1 is False:
+            return
+    else:
+        await editMessage(call, f'🕶️ Error!\n 显示失败，请上报管理检查设置', buttons=back_members_ikb)
 
 
 @bot.on_callback_query(filters.regex('exchange') & user_in_group_on_filter)
@@ -701,8 +854,14 @@ async def do_store_reborn(_, call):
         elif m.text == '/cancel':
             await asyncio.gather(m.delete(), do_store(_, call))
         else:
+            # 多服务器适配：获取用户对应的服务实例
+            emby_service, server_config, user = get_user_emby_service(call.from_user.id)
+            if not emby_service:
+                await sendMessage(call, '❌ 无法连接到您所在的服务器')
+                return
+
             sql_update_emby(Emby.tg == call.from_user.id, iv=e.iv - _open.exchange_cost, lv='b')
-            await emby.emby_change_policy(emby_id=e.embyid)
+            await emby_service.emby_change_policy(emby_id=e.embyid)
             LOGGER.info(f'【兑换解封】- {call.from_user.id} 已花费 {_open.exchange_cost}{credits},解除封禁')
             await asyncio.gather(m.delete(), do_store(_, call),
                                  sendMessage(call, '解封成功<(￣︶￣)↗[GO!]\n此消息将在20s后自焚', timer=20))
@@ -818,10 +977,16 @@ async def my_favorite(_, call):
     get_emby = sql_get_emby(tg=call.from_user.id)
     if get_emby is None:
         return await callAnswer(call, '您还没有Emby账户', True)
+
+    # 多服务器适配：获取用户对应的服务实例
+    emby_service, server_config, user = get_user_emby_service(call.from_user.id)
+    if not emby_service:
+        return await callAnswer(call, '❌ 无法连接到您所在的服务器', True)
+
     limit = 10
     start_index = (page - 1) * limit
-    favorites = await emby.get_favorite_items(emby_id=get_emby.embyid, start_index=start_index, limit=limit)
-    text = "**我的收藏**\n\n"
+    favorites = await emby_service.get_favorite_items(emby_id=get_emby.embyid, start_index=start_index, limit=limit)
+    text = f"**我的收藏**（当前服务器：{server_config.name} `{server_config.id}`）\n\n"
     for item in favorites.get("Items", []):
         item_id = item.get("Id")
         if not item_id:
@@ -850,11 +1015,17 @@ async def my_devices(_, call):
     get_emby = sql_get_emby(tg=call.from_user.id)
     if get_emby is None:
         return await callAnswer(call, '您还没有Emby账户', True)
-    success, result = await emby.get_emby_userip(emby_id=get_emby.embyid)
+
+    # 多服务器适配：获取用户对应的服务实例
+    emby_service, server_config, user = get_user_emby_service(call.from_user.id)
+    if not emby_service:
+        return await callAnswer(call, '❌ 无法连接到您所在的服务器', True)
+
+    success, result = await emby_service.get_emby_userip(emby_id=get_emby.embyid)
     if not success or len(result) == 0:
         return await callAnswer(call, '您好像没播放信息吖')
     else:
-        await callAnswer(call, '🔍 正在获取您的设备信息')
+        await callAnswer(call, f'🔍 正在获取您的设备信息（当前服务器：{server_config.name} `{server_config.id}`）')
         device_count = 0
         ip_count = 0
         device_list = []

@@ -1,12 +1,12 @@
 """
-kk - 纯装x
-赠与账户，禁用，删除
+kk - 核心用户管理
+赠与账户，禁用，删除（多服务器版本）
 """
 import pyrogram
 from pyrogram import filters
 from pyrogram.errors import BadRequest
 from bot import bot, prefixes, owner, admins, LOGGER, extra_emby_libs, config
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
 from bot.func_helper.filters import admins_on_filter
 from bot.func_helper.fix_bottons import cr_kk_ikb, gog_rester_ikb
 from bot.func_helper.msg_utils import deleteMessage, sendMessage, editMessage
@@ -15,7 +15,7 @@ from bot.sql_helper.sql_emby import sql_add_emby, sql_get_emby, sql_update_emby,
 
 
 # 管理用户
-@bot.on_message(filters.command('kk', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('user', prefixes) & admins_on_filter)
 async def user_info(_, msg):
     await deleteMessage(msg)
     if msg.reply_to_message is None:
@@ -30,7 +30,7 @@ async def user_info(_, msg):
                 pass
             first = await bot.get_chat(uid)
         except (IndexError, KeyError, ValueError):
-            return await sendMessage(msg, '**请先给我一个tg_id！**\n\n用法：/kk [tg_id]\n或者对某人回复kk', timer=60)
+            return await sendMessage(msg, '**请先给我一个tg_id！**\n\n用法：/user [tg_id]\n或者对某人回复 /user', timer=60)
         except BadRequest:
             return await sendMessage(msg, f'{msg.command[1]} - 🎂抱歉，此id未登记bot，或者id错误', timer=60)
         except AttributeError:
@@ -57,6 +57,7 @@ async def user_info(_, msg):
 # 封禁或者解除
 @bot.on_callback_query(filters.regex('user_ban'))
 async def kk_user_ban(_, call):
+    """用户封禁/解封（多服务器版本）"""
     if not judge_admins(call.from_user.id):
         return await call.answer("请不要以下犯上 ok？", show_alert=True)
 
@@ -72,9 +73,14 @@ async def kk_user_ban(_, call):
     if e.embyid is None:
         await editMessage(call, f'💢 ta 没有注册账户。', timer=60)
     else:
+        # 获取用户对应的服务实例
+        emby_service, server_config, user = get_user_emby_service(b)
+        if not emby_service:
+            return await editMessage(call, f'❌ 无法连接到用户所在服务器', timer=60)
+
         text = f'🎯 管理员 [{call.from_user.first_name}](tg://user?id={call.from_user.id}) 对 [{first.first_name}](tg://user?id={b}) - {e.name} 的'
         if e.lv != "c":
-            if await emby.emby_change_policy(emby_id=e.embyid, disable=True) is True:
+            if await emby_service.emby_change_policy(emby_id=e.embyid, disable=True) is True:
                 if sql_update_emby(Emby.tg == b, lv='c') is True:
                     text += f'封禁完成，此状态可在下次续期时刷新'
                     LOGGER.info(text)
@@ -85,7 +91,7 @@ async def kk_user_ban(_, call):
                 text += f'封禁失败，请检查emby服务器。响应错误'
                 LOGGER.error(text)
         elif e.lv == "c":
-            if await emby.emby_change_policy(emby_id=e.embyid):
+            if await emby_service.emby_change_policy(emby_id=e.embyid):
                 if sql_update_emby(Emby.tg == b, lv='b'):
                     text += '解禁完成'
                     LOGGER.info(text)
@@ -102,6 +108,7 @@ async def kk_user_ban(_, call):
 # 开通额外媒体库
 @bot.on_callback_query(filters.regex('embyextralib_unblock'))
 async def user_embyextralib_unblock(_, call):
+    """开通额外媒体库（多服务器版本）"""
     if not judge_admins(call.from_user.id):
         return await call.answer("请不要以下犯上 ok？", show_alert=True)
     await call.answer('🎬 正在为TA开启显示ing')
@@ -110,13 +117,19 @@ async def user_embyextralib_unblock(_, call):
     if e.embyid is None:
         await editMessage(call, f'💢 ta 没有注册账户。', timer=60)
         return
+
+    # 获取用户对应的服务实例
+    emby_service, server_config, user = get_user_emby_service(tgid)
+    if not emby_service:
+        return await editMessage(call, f'❌ 无法连接到用户所在服务器', timer=60)
+
     embyid = e.embyid
-    success, rep = await emby.user(emby_id=embyid)
+    success, rep = await emby_service.user(emby_id=embyid)
     if success:
         try:
             # 使用封装的显示额外媒体库方法
-            re = await emby.show_folders_by_names(embyid, extra_emby_libs)
-            
+            re = await emby_service.show_folders_by_names(embyid, extra_emby_libs)
+
             if re is True:
                 await editMessage(call, f'🌟 好的，管理员 [{call.from_user.first_name}](tg://user?id={call.from_user.id})\n'
                                         f'已开启了 [TA](tg://user?id={tgid}) 的额外媒体库权限\n{extra_emby_libs}')
@@ -132,6 +145,7 @@ async def user_embyextralib_unblock(_, call):
 # 隐藏额外媒体库
 @bot.on_callback_query(filters.regex('embyextralib_block'))
 async def user_embyextralib_block(_, call):
+    """隐藏额外媒体库（多服务器版本）"""
     if not judge_admins(call.from_user.id):
         return await call.answer("请不要以下犯上 ok？", show_alert=True)
     await call.answer('🎬 正在为TA关闭显示ing')
@@ -140,13 +154,19 @@ async def user_embyextralib_block(_, call):
     if e.embyid is None:
         await editMessage(call, f'💢 ta 没有注册账户。', timer=60)
         return
+
+    # 获取用户对应的服务实例
+    emby_service, server_config, user = get_user_emby_service(tgid)
+    if not emby_service:
+        return await editMessage(call, f'❌ 无法连接到用户所在服务器', timer=60)
+
     embyid = e.embyid
-    success, rep = await emby.user(emby_id=embyid)
+    success, rep = await emby_service.user(emby_id=embyid)
     if success:
         try:
             # 使用封装的隐藏额外媒体库方法
-            re = await emby.hide_folders_by_names(embyid, extra_emby_libs)
-            
+            re = await emby_service.hide_folders_by_names(embyid, extra_emby_libs)
+
             if re is True:
                 await editMessage(call, f'🌟 好的，管理员 [{call.from_user.first_name}](tg://user?id={call.from_user.id})\n'
                                         f'已关闭了 [TA](tg://user?id={tgid}) 的额外媒体库权限\n{extra_emby_libs}')
@@ -201,7 +221,12 @@ async def close_emby(_, call):
     if e.embyid is None:
         return await editMessage(call, f'💢 ta 还没有注册账户。', timer=60)
 
-    if await emby.emby_del(emby_id=e.embyid):
+    # 多服务器适配：获取用户对应的服务实例
+    emby_service, server_config, user = get_user_emby_service(b)
+    if not emby_service:
+        return await editMessage(call, f'❌ 无法连接到用户所在的服务器', timer=60)
+
+    if await emby_service.emby_del(emby_id=e.embyid):
         sql_update_emby(Emby.embyid == e.embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
         tem_deluser()
         await editMessage(call,

@@ -11,7 +11,8 @@ from pyrogram import filters
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 from bot import bot, LOGGER
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.filters import admins_on_filter
 from bot.func_helper.msg_utils import sendMessage, editMessage
 from bot.func_helper.utils import split_long_message
@@ -136,11 +137,32 @@ async def audit_ip_command(_, message: Message):
         # 发送处理中消息
         processing_msg = await message.reply(f"🔍 正在审计 IP 地址 `{ip_address}` {days if days else '所有时间'} 的活动...")
 
-        # 调用审计 API
-        success, result = await emby.get_users_by_ip(ip_address, days)
-        
-        if not success:
-            error_text = f"❌ **IP 审计失败**\n\n**错误信息:** {result}"
+        # 多服务器适配：聚合所有服务器的审计结果
+        all_servers = emby_manager.get_all_servers()
+        if not all_servers:
+            error_text = "❌ **IP 审计失败**\n\n**错误信息:** 没有可用的服务器"
+            await editMessage(processing_msg, error_text)
+            return
+
+        result = []
+        errors = []
+        for server_id, emby_service in all_servers.items():
+            try:
+                success, server_result = await emby_service.get_users_by_ip(ip_address, days)
+                if success and server_result:
+                    # 为每个结果添加服务器信息
+                    for user in server_result:
+                        user['_server_id'] = server_id
+                    result.extend(server_result)
+                elif not success:
+                    errors.append(f"{server_id}: {server_result}")
+            except Exception as e:
+                LOGGER.warning(f"审计服务器 {server_id} 失败: {e}")
+                errors.append(f"{server_id}: {str(e)}")
+
+        # 如果所有服务器都失败
+        if not result and errors:
+            error_text = f"❌ **IP 审计失败**\n\n**错误信息:**\n" + "\n".join(errors)
             await editMessage(processing_msg, error_text)
             return
 
@@ -283,11 +305,32 @@ async def audit_device_name_command(_, message: Message):
         # 发送处理中消息
         processing_msg = await message.reply(f"🔍 正在审计包含 `{device_keyword}` 的设备名 {days if days else '所有时间'} 的使用情况...")
 
-        # 调用设备名 审计 API
-        success, result = await emby.get_users_by_device_name(device_keyword, days)
-        
-        if not success:
-            error_text = f"❌ **设备名审计失败**\n\n**错误信息:** {result}"
+        # 多服务器适配：聚合所有服务器的审计结果
+        all_servers = emby_manager.get_all_servers()
+        if not all_servers:
+            error_text = "❌ **设备名审计失败**\n\n**错误信息:** 没有可用的服务器"
+            await editMessage(processing_msg, error_text)
+            return
+
+        result = []
+        errors = []
+        for server_id, emby_service in all_servers.items():
+            try:
+                success, server_result = await emby_service.get_users_by_device_name(device_keyword, days)
+                if success and server_result:
+                    # 为每个结果添加服务器信息
+                    for user in server_result:
+                        user['_server_id'] = server_id
+                    result.extend(server_result)
+                elif not success:
+                    errors.append(f"{server_id}: {server_result}")
+            except Exception as e:
+                LOGGER.warning(f"审计服务器 {server_id} 失败: {e}")
+                errors.append(f"{server_id}: {str(e)}")
+
+        # 如果所有服务器都失败
+        if not result and errors:
+            error_text = f"❌ **设备名审计失败**\n\n**错误信息:**\n" + "\n".join(errors)
             await editMessage(processing_msg, error_text)
             return
 
@@ -419,11 +462,32 @@ async def audit_client_name_command(_, message: Message):
         # 发送处理中消息
         processing_msg = await message.reply(f"🔍 正在审计包含 `{client_keyword}` 的客户端名 {days if days else '所有时间'} 的使用情况...")
 
-        # 调用客户端名审计 API
-        success, result = await emby.get_users_by_client_name(client_keyword, days)
-        
-        if not success:
-            error_text = f"❌ **客户端名审计失败**\n\n**错误信息:** {result}"
+        # 多服务器适配：聚合所有服务器的审计结果
+        all_servers = emby_manager.get_all_servers()
+        if not all_servers:
+            error_text = "❌ **客户端名审计失败**\n\n**错误信息:** 没有可用的服务器"
+            await editMessage(processing_msg, error_text)
+            return
+
+        result = []
+        errors = []
+        for server_id, emby_service in all_servers.items():
+            try:
+                success, server_result = await emby_service.get_users_by_client_name(client_keyword, days)
+                if success and server_result:
+                    # 为每个结果添加服务器信息
+                    for user in server_result:
+                        user['_server_id'] = server_id
+                    result.extend(server_result)
+                elif not success:
+                    errors.append(f"{server_id}: {server_result}")
+            except Exception as e:
+                LOGGER.warning(f"审计服务器 {server_id} 失败: {e}")
+                errors.append(f"{server_id}: {str(e)}")
+
+        # 如果所有服务器都失败
+        if not result and errors:
+            error_text = f"❌ **客户端名审计失败**\n\n**错误信息:**\n" + "\n".join(errors)
             await editMessage(processing_msg, error_text)
             return
 

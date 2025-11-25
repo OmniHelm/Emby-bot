@@ -1,5 +1,5 @@
 """
-定时检测账户有无过期
+定时检测账户有无过期（多服务器版本）
 """
 from datetime import timedelta, datetime
 
@@ -7,10 +7,12 @@ from pyrogram.errors import FloodWait
 from sqlalchemy import and_
 from asyncio import sleep
 from bot import bot, group, LOGGER, _open, config
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service, get_user_emby_services
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.utils import tem_deluser
 from bot.sql_helper.sql_emby import Emby, get_all_emby, sql_update_emby
 from bot.sql_helper.sql_emby2 import get_all_emby2, Emby2, sql_update_emby2
+from bot.sql_helper.sql_server_bindings import delete_user_bindings
 
 
 async def check_expired():
@@ -60,17 +62,32 @@ async def check_expired():
                 LOGGER.error(e)
 
         else:
-            if await emby.emby_change_policy(emby_id=r.embyid, disable=True):
-                dead_day = r.ex + timedelta(days=config.freeze_days)
-                if sql_update_emby(Emby.tg == r.tg, lv='c'):
-                    text = f'【到期检测】\n#id{r.tg} 到期禁用 [{r.name}](tg://user?id={r.tg})\n将为您封存至 {dead_day.strftime("%Y-%m-%d")}，请及时续期'
-                    LOGGER.info(text)
-                else:
-                    text = f'【到期检测】\n#id{r.tg} 到期禁用 [{r.name}](tg://user?id={r.tg}) 已禁用，数据库写入失败'
-                    LOGGER.warning(text)
-            else:
-                text = f'【到期检测】\n#id{r.tg} 到期禁用 [{r.name}](tg://user?id={r.tg}) embyapi操作失败'
+            # 对所有绑定服务器禁用
+            services = get_user_emby_services(r.tg)
+            if not services:
+                text = f'【到期检测】\n#id{r.tg} 到期禁用 [{r.name}](tg://user?id={r.tg}) 无法连接到服务器'
                 LOGGER.error(text)
+            else:
+                success = False
+                for svc, server_cfg, bind_eid in services:
+                    try:
+                        if await svc.emby_change_policy(emby_id=bind_eid, disable=True):
+                            success = True
+                        else:
+                            LOGGER.warning(f"到期禁用失败: server={server_cfg.id} embyid={bind_eid}")
+                    except Exception as e:
+                        LOGGER.warning(f"到期禁用异常: server={server_cfg.id} embyid={bind_eid} err={e}")
+                if success:
+                    dead_day = r.ex + timedelta(days=config.freeze_days)
+                    if sql_update_emby(Emby.tg == r.tg, lv='c'):
+                        text = f'【到期检测】\n#id{r.tg} 到期禁用 [{r.name}](tg://user?id={r.tg})\n将为您封存至 {dead_day.strftime("%Y-%m-%d")}，请及时续期'
+                        LOGGER.info(text)
+                    else:
+                        text = f'【到期检测】\n#id{r.tg} 到期禁用 [{r.name}](tg://user?id={r.tg}) 已禁用，数据库写入失败'
+                        LOGGER.warning(text)
+                else:
+                    text = f'【到期检测】\n#id{r.tg} 到期禁用 [{r.name}](tg://user?id={r.tg}) embyapi操作失败'
+                    LOGGER.error(text)
             try:
                 send = await bot.send_message(r.tg, text)
                 await send.forward(group[0])
@@ -88,7 +105,12 @@ async def check_expired():
     for c in rsc:
         if c.us >= 30:
             c_us = c.us - 30
-            if await emby.emby_change_policy(emby_id=c.embyid, disable=False):
+            # 获取用户对应的服务实例
+            emby_service, server_config, user = get_user_emby_service(c.tg)
+            if not emby_service:
+                text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg}) 无法连接到服务器'
+                LOGGER.error(text)
+            elif await emby_service.emby_change_policy(emby_id=c.embyid, disable=False):
                 if sql_update_emby(Emby.tg == c.tg, lv='b', ex=ext, us=c_us):
                     text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg})\n' \
                            f'在当前时间自动续期30天\n📅实时到期: {ext.strftime("%Y-%m-%d %H:%M:%S")}'
@@ -110,16 +132,31 @@ async def check_expired():
 
         elif _open.exchange and c.iv >= _open.exchange_cost:
             c_iv = c.iv - _open.exchange_cost
-            if await emby.emby_change_policy(emby_id=c.embyid, disable=False):
-                if sql_update_emby(Emby.tg == c.tg, lv='b', ex=ext, iv=c_iv):
-                    text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg})\n在当前时间自动续期30天\n📅实时到期：{ext.strftime("%Y-%m-%d %H:%M:%S")}'
-                    LOGGER.info(text)
-                else:
-                    text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg}) 已禁用，数据库写入失败，请联系管理'
-                    LOGGER.warning(text)
-            else:
-                text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg}) embyapi操作失败，请联系管理'
+            # 对所有绑定服务器解封
+            services = get_user_emby_services(c.tg)
+            if not services:
+                text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg}) 无法连接到服务器'
                 LOGGER.error(text)
+            else:
+                success = False
+                for svc, server_cfg, bind_eid in services:
+                    try:
+                        if await svc.emby_change_policy(emby_id=bind_eid, disable=False):
+                            success = True
+                        else:
+                            LOGGER.warning(f"解封失败: server={server_cfg.id} embyid={bind_eid}")
+                    except Exception as e:
+                        LOGGER.warning(f"解封异常: server={server_cfg.id} embyid={bind_eid} err={e}")
+                if success:
+                    if sql_update_emby(Emby.tg == c.tg, lv='b', ex=ext, iv=c_iv):
+                        text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg})\n在当前时间自动续期30天\n📅实时到期：{ext.strftime("%Y-%m-%d %H:%M:%S")}'
+                        LOGGER.info(text)
+                    else:
+                        text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg}) 已禁用，数据库写入失败，请联系管理'
+                        LOGGER.warning(text)
+                else:
+                    text = f'【到期检测】\n#id{c.tg} 解封账户 [{c.name}](tg://user?id={c.tg}) embyapi操作失败，请联系管理'
+                    LOGGER.error(text)
             try:
                 await bot.send_message(c.tg, text)
             except FloodWait as f:
@@ -133,15 +170,30 @@ async def check_expired():
             delete_day = c.ex + timedelta(days=config.freeze_days)
             if datetime.now() < delete_day:
                 continue
-            if await emby.emby_del(emby_id=c.embyid):
-                sql_update_emby(Emby.embyid == c.embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None,
-                                ex=None)
-                tem_deluser()
-                text = f'【到期检测】\n#id{c.tg} 删除账户 [{c.name}](tg://user?id={c.tg})\n已到期 {config.freeze_days} 天，执行清除任务。期待下次与你相遇'
-                LOGGER.info(text)
+            # 对所有绑定服务器执行删除
+            services = get_user_emby_services(c.tg)
+            if not services:
+                text = f'【到期检测】\n#id{c.tg} 删除账户 [{c.name}](tg://user?id={c.tg}) 无法连接到服务器'
+                LOGGER.error(text)
             else:
-                text = f'【到期检测】\n#id{c.tg} #删除账户 [{c.name}](tg://user?id={c.tg})\n到期删除失败，请检查以免无法进行后续使用'
-                LOGGER.warning(text)
+                success = False
+                for svc, server_cfg, bind_eid in services:
+                    try:
+                        if await svc.emby_del(emby_id=bind_eid):
+                            success = True
+                        else:
+                            LOGGER.warning(f"删除失败: server={server_cfg.id} embyid={bind_eid}")
+                    except Exception as e:
+                        LOGGER.warning(f"删除异常: server={server_cfg.id} embyid={bind_eid} err={e}")
+                if success:
+                    sql_update_emby(Emby.tg == c.tg, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
+                    delete_user_bindings(c.tg)  # 同时删除绑定记录
+                    tem_deluser()
+                    text = f'【到期检测】\n#id{c.tg} 删除账户 [{c.name}](tg://user?id={c.tg})\n已到期 {config.freeze_days} 天，执行清除任务。期待下次与你相遇'
+                    LOGGER.info(text)
+                else:
+                    text = f'【到期检测】\n#id{c.tg} #删除账户 [{c.name}](tg://user?id={c.tg})\n到期删除失败，请检查以免无法进行后续使用'
+                    LOGGER.warning(text)
             try:
                 send = await bot.send_message(c.tg, text)
                 await send.forward(group[0])
@@ -157,7 +209,13 @@ async def check_expired():
     if rseired is None:
         return LOGGER.info(f'【封禁检测】- emby2 无数据，跳过')
     for e in rseired:
-        if await emby.emby_change_policy(emby_id=e.embyid, disable=True):
+        # 获取 emby2 用户对应的服务器实例
+        server_id = e.server_id if hasattr(e, 'server_id') else 'main'
+        emby_service = emby_manager.get_server(server_id)
+        if not emby_service:
+            text = f'【封禁检测】- 到期封印非TG账户：`{e.name}` 无法连接到服务器 {server_id}'
+            LOGGER.error(text)
+        elif await emby_service.emby_change_policy(emby_id=e.embyid, disable=True):
             if sql_update_emby2(Emby2.embyid == e.embyid, expired=1):
                 text = f"【封禁检测】- 到期封印非TG账户 [{e.name}](google.com?q={e.embyid}) Done！"
                 LOGGER.info(text)
@@ -171,5 +229,5 @@ async def check_expired():
             LOGGER.warning(str(f))
             await sleep(f.value * 1.2)
             await bot.send_message(group[0], text)
-        except Exception as e:
-            LOGGER.error(e)
+        except Exception as exc:
+            LOGGER.error(exc)

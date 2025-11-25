@@ -1,13 +1,15 @@
 from pyrogram import filters
 from datetime import datetime
 
-from bot import bot, prefixes, LOGGER
-from bot.func_helper.emby import emby
+from bot import bot, prefixes, LOGGER, config
+from bot.func_helper.emby_utils import get_user_emby_service, get_user_emby_services
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.filters import admins_on_filter
 from bot.func_helper.msg_utils import deleteMessage, editMessage, sendMessage
 from bot.func_helper.utils import tem_deluser
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby, sql_delete_emby_by_tg, sql_delete_emby
 from bot.sql_helper.sql_emby2 import sql_get_emby2, sql_delete_emby2_by_name
+from bot.sql_helper.sql_server_bindings import delete_user_bindings
 
 # 导入优化模块
 from bot.constants.messages import Messages
@@ -15,7 +17,7 @@ from bot.func_helper.message_formatter import MessageFormatter
 
 
 # 删除账号命令
-@bot.on_message(filters.command('rmemby', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('user_remove', prefixes) & admins_on_filter)
 async def rmemby_user(_, msg):
     await deleteMessage(msg)
     reply = await msg.reply("🔄 正在处理...")
@@ -41,9 +43,25 @@ async def rmemby_user(_, msg):
     if e.embyid is not None:
         first = await bot.get_chat(e.tg)
 
-        # 执行删除
-        if await emby.emby_del(emby_id=e.embyid):
-            sql_update_emby(Emby.embyid == e.embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
+        # 多服务器：遍历所有绑定服务器逐个删除
+        services = get_user_emby_services(e.tg)
+        if not services:
+            return await reply.edit('❌ 未找到该用户的服务器绑定记录')
+
+        any_success = False
+        for svc, server_cfg, bind_eid in services:
+            try:
+                if await svc.emby_del(emby_id=bind_eid):
+                    any_success = True
+                else:
+                    LOGGER.warning(f"删除服务器 {server_cfg.id} 上的账号失败: embyid={bind_eid}")
+            except Exception as ex:
+                LOGGER.warning(f"删除服务器 {server_cfg.id} 上的账号异常: embyid={bind_eid}, err={ex}")
+
+        if any_success:
+            # 清空数据库记录并删除所有绑定
+            sql_update_emby(Emby.tg == e.tg, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
+            delete_user_bindings(e.tg)
             tem_deluser()
 
             # 获取管理员信息
@@ -58,7 +76,7 @@ async def rmemby_user(_, msg):
 
 **账户信息：**
 • 用户名：`{e.name}`
-• Emby ID：`{e.embyid}`
+• 绑定服务器：已全部删除
 
 **执行人：**
 {sign_name}
@@ -91,7 +109,9 @@ async def rmemby_user(_, msg):
             except Exception as ex:
                 LOGGER.warning(f"通知删除账户失败 tg={e.tg}: {ex}")
 
-            LOGGER.info(f"【admin】：管理员 {sign_name} 执行删除 {first.first_name}-{e.tg} 账户 {e.name}")
+            LOGGER.info(f"【admin】：管理员 {sign_name} 执行删除 {first.first_name}-{e.tg} 账户 {e.name}（已删除所有绑定服务器账号）")
+        else:
+            await reply.edit('❌ 无法在任何服务器删除该用户账号，请检查服务器连接或绑定关系')
     else:
         # 优化：未注册账户的提示
         error_msg = f"""
@@ -102,7 +122,7 @@ async def rmemby_user(_, msg):
 该用户尚未创建 Emby 账户，无需删除。
 """
         await reply.edit(error_msg)
-@bot.on_message(filters.command('only_rm_record', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('del_record', prefixes) & admins_on_filter)
 async def only_rm_record(_, msg):
     await deleteMessage(msg)
     tg_id = None
@@ -114,7 +134,7 @@ async def only_rm_record(_, msg):
     else:
         tg_id = msg.reply_to_message.from_user.id
     if tg_id is None:
-        return await sendMessage(msg, "❌ 使用格式：/only_rm_record tg_id或回复用户的消息")
+        return await sendMessage(msg, "❌ 使用格式：/del_record tg_id或回复用户的消息")
 
     emby1 = sql_get_emby(tg=tg_id)
     # 获取 emby2 表中的用户信息
@@ -142,24 +162,48 @@ async def only_rm_record(_, msg):
         LOGGER.error(f"删除用户 {tg_id} 的数据库记录失败, {ex}")
 
 
-@bot.on_message(filters.command('only_rm_emby', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('del_emby', prefixes) & admins_on_filter)
 async def only_rm_emby(_, msg):
     await deleteMessage(msg)
     try:
         emby_id = msg.command[1]
     except (IndexError, ValueError):
-        return await sendMessage(msg, "❌ 使用格式：/only_rm_emby embyid或者embyname")
-    
-    res = await emby.emby_del(emby_id=emby_id)
-    if not res:
-        # 使用 emby_name 获取此用户的 emby_id
-        success, embyuser = await emby.get_emby_user_by_name(emby_name=emby_id)
-        if not success:
-            return await sendMessage(msg, f"❌ 未找到此用户 {emby_id} 的记录")
-        res = await emby.emby_del(emby_id=embyuser.get("Id"))
-        if not res:
-            return await sendMessage(msg, f"❌ 删除用户 {emby_id} 失败")
-        sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'[{msg.from_user.first_name}](tg://user?id={msg.from_user.id})'
-        await sendMessage(msg, f"管理员 {sign_name} 已删除用户 {emby_id} 的Emby账号")
-        LOGGER.info(
-            f"管理员 {sign_name} 删除了用户 {emby_id} 的Emby账号")
+        return await sendMessage(msg, "❌ 使用格式：/del_emby embyid或者embyname")
+
+    # 多服务器适配：遍历所有服务器查找并删除用户
+    all_servers = emby_manager.get_all_servers()
+    if not all_servers:
+        return await sendMessage(msg, "❌ 没有可用的服务器")
+
+    deleted = False
+    found_server = None
+
+    for server_id, emby_service in all_servers.items():
+        try:
+            # 先尝试直接删除（按 emby_id）
+            res = await emby_service.emby_del(emby_id=emby_id)
+            if res:
+                deleted = True
+                found_server = server_id
+                break
+
+            # 如果失败，尝试按名称查找
+            success, embyuser = await emby_service.get_emby_user_by_name(emby_name=emby_id)
+            if success and embyuser:
+                res = await emby_service.emby_del(emby_id=embyuser.get("Id"))
+                if res:
+                    deleted = True
+                    found_server = server_id
+                    break
+        except Exception as e:
+            LOGGER.warning(f"在服务器 {server_id} 删除用户失败: {e}")
+            continue
+
+    if not deleted:
+        return await sendMessage(msg, f"❌ 在所有服务器上都未找到或删除失败: {emby_id}")
+
+    sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'[{msg.from_user.first_name}](tg://user?id={msg.from_user.id})'
+    server_config = config.get_server_by_id(found_server)
+    server_name = server_config.name if server_config else found_server
+    await sendMessage(msg, f"✅ 管理员 {sign_name} 已删除用户 {emby_id} 的Emby账号\n**服务器**: {server_name}")
+    LOGGER.info(f"管理员 {sign_name} 在服务器 {server_name} 删除了用户 {emby_id} 的Emby账号")

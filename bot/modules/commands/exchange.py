@@ -4,7 +4,8 @@
 from datetime import timedelta, datetime
 
 from bot import bot, _open, LOGGER, bot_photo
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.fix_bottons import register_code_ikb
 from bot.func_helper.msg_utils import sendMessage, sendPhoto
 from bot.sql_helper.sql_code import Code
@@ -102,7 +103,13 @@ async def rgs_code(_, msg, register_code):
             if ex_new > ex:
                 # 账户已过期，从当前时间开始计算
                 ex_new = ex_new + timedelta(days=us1)
-                await emby.emby_change_policy(emby_id=embyid, disable=False)
+
+                # 获取用户对应的服务实例（多服务器适配）
+                emby_service, server_config, user = get_user_emby_service(msg.from_user.id)
+                if not emby_service:
+                    return await sendMessage(msg, '❌ 无法连接到您所在的服务器，续期失败', timer=60)
+
+                await emby_service.emby_change_policy(emby_id=embyid, disable=False)
                 if lv == 'c':
                     session.query(Emby).filter(Emby.tg == msg.from_user.id).update({Emby.ex: ex_new, Emby.lv: 'b'})
                 else:

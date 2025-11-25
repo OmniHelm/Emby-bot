@@ -5,7 +5,8 @@ from pyrogram import enums
 from datetime import date
 
 from bot.func_helper.utils import convert_s
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 from bot.ranks_helper import ranks_draw
 from bot import bot, group, ranks, LOGGER, schedall, save_config
 from bot.func_helper.utils import split_long_message
@@ -62,13 +63,29 @@ async def send_multi_message(chat_id, photo_path, caption, parse_mode, pin_first
 async def day_ranks(pin_mode=True):
     draw = ranks_draw.RanksDraw(ranks.logo, backdrop=ranks.backdrop)
     LOGGER.info("【ranks_task】定时任务 正在推送日榜")
-    success, movies = await emby.get_emby_report(types='Movie', days=1)
-    if not success:
-        LOGGER.error('【ranks_task】推送日榜失败，获取Movies数据失败!')
-        return
-    success, tvs = await emby.get_emby_report(types='Episode', days=1)
-    if not success:
-        LOGGER.error('【ranks_task】推送日榜失败，获取Episode数据失败!')
+
+    # 多服务器适配：聚合所有服务器的播放数据
+    all_servers = emby_manager.get_all_servers()
+    movies = []
+    tvs = []
+
+    for server_id, emby_service in all_servers.items():
+        try:
+            success, server_movies = await emby_service.get_emby_report(types='Movie', days=1)
+            if success and server_movies:
+                movies.extend(server_movies)
+        except Exception as e:
+            LOGGER.warning(f"从服务器 {server_id} 获取电影日榜失败: {e}")
+
+        try:
+            success, server_tvs = await emby_service.get_emby_report(types='Episode', days=1)
+            if success and server_tvs:
+                tvs.extend(server_tvs)
+        except Exception as e:
+            LOGGER.warning(f"从服务器 {server_id} 获取剧集日榜失败: {e}")
+
+    if not movies and not tvs:
+        LOGGER.error('【ranks_task】推送日榜失败，所有服务器均无数据!')
         return
     # 绘制海报
     await draw.draw(movies, tvs)
@@ -116,13 +133,29 @@ async def day_ranks(pin_mode=True):
 async def week_ranks(pin_mode=True):
     draw = ranks_draw.RanksDraw(ranks.logo, weekly=True, backdrop=ranks.backdrop)
     LOGGER.info("【ranks_task】定时任务 正在推送周榜")
-    success, movies = await emby.get_emby_report(types='Movie', days=7)
-    if not success:
-        LOGGER.warning('【ranks_task】推送周榜失败，没有获取到Movies数据!')
-        return
-    success, tvs = await emby.get_emby_report(types='Episode', days=7)
-    if not success:
-        LOGGER.error('【ranks_task】推送周榜失败，没有获取到Episode数据!')
+
+    # 多服务器适配：聚合所有服务器的播放数据
+    all_servers = emby_manager.get_all_servers()
+    movies = []
+    tvs = []
+
+    for server_id, emby_service in all_servers.items():
+        try:
+            success, server_movies = await emby_service.get_emby_report(types='Movie', days=7)
+            if success and server_movies:
+                movies.extend(server_movies)
+        except Exception as e:
+            LOGGER.warning(f"从服务器 {server_id} 获取电影周榜失败: {e}")
+
+        try:
+            success, server_tvs = await emby_service.get_emby_report(types='Episode', days=7)
+            if success and server_tvs:
+                tvs.extend(server_tvs)
+        except Exception as e:
+            LOGGER.warning(f"从服务器 {server_id} 获取剧集周榜失败: {e}")
+
+    if not movies and not tvs:
+        LOGGER.error('【ranks_task】推送周榜失败，所有服务器均无数据!')
         return
     # 绘制海报
     await draw.draw(movies, tvs)

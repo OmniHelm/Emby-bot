@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Request
 from bot.sql_helper.sql_emby import Emby
 from bot.sql_helper.sql_favorites import EmbyFavorites
+from bot.sql_helper.sql_server_bindings import EmbyServerBinding
 from bot.sql_helper import Session
-from bot.func_helper.emby import emby
-from bot import LOGGER, bot
+from bot.func_helper.emby_manager import emby_manager
+from bot import LOGGER, bot, config
 import json
 
 router = APIRouter()
@@ -20,8 +21,8 @@ async def send_update_notification_to_user(tg_id: int, message: str):
         LOGGER.error(f"发送通知失败: {str(e)}")
         return False
 
-async def check_and_notify_series_update(item_data: dict):
-    """检查并通知剧集更新"""
+async def check_and_notify_series_update(server_id: str, item_data: dict):
+    """检查并通知剧集更新（按 server_id）"""
     try:
         # 获取剧集信息
         series_id = item_data.get("SeriesId")  # 剧集ID
@@ -34,12 +35,15 @@ async def check_and_notify_series_update(item_data: dict):
             
         session = Session()
         try:
-            # 查找收藏了这个剧集的用户
-            favorites = session.query(EmbyFavorites, Emby).join(
-                Emby, EmbyFavorites.embyid == Emby.embyid
+            # 查找收藏了这个剧集的用户（按服务器过滤，并通过绑定表获取 tg）
+            favorites = session.query(EmbyFavorites, EmbyServerBinding).join(
+                EmbyServerBinding,
+                (EmbyFavorites.server_id == EmbyServerBinding.server_id) &
+                (EmbyFavorites.embyid == EmbyServerBinding.embyid)
             ).filter(
+                EmbyFavorites.server_id == server_id,
                 EmbyFavorites.item_id == series_id,
-                Emby.tg.isnot(None)
+                EmbyServerBinding.tg.isnot(None)
             ).all()
             
             if favorites:
@@ -51,26 +55,35 @@ async def check_and_notify_series_update(item_data: dict):
                 )
                 
                 # 给每个收藏了该剧集的用户发送通知
-                for favorite, user in favorites:
-                    await send_update_notification_to_user(user.tg, message)
-                    LOGGER.info(f"已发送剧集更新通知给用户 {user.tg}: {series_name} - {episode_number}")
+                for favorite, binding in favorites:
+                    await send_update_notification_to_user(binding.tg, message)
+                    LOGGER.info(f"[{server_id}] 已发送剧集更新通知给用户 {binding.tg}: {series_name} - {episode_number}")
         finally:
             session.close()
             
     except Exception as e:
         LOGGER.error(f"处理剧集更新通知失败: {str(e)}")
 
-async def check_and_notify_person_update(item_data: dict):
-    """检查并通知演员相关更新"""
+async def check_and_notify_person_update(server_id: str, item_data: dict):
+    """检查并通知演员相关更新（按 server_id）"""
     try:
         # 获取电影/剧集ID
         item_id = item_data.get("Id", "")
         if not item_id:
             return
-            
-        # 获取演员信息
-        success, people_list = await emby.item_id_people(item_id=item_id)
-        if not success:
+
+        # 仅查询该服务器的演员信息
+        people_list = []
+        emby_service = emby_manager.get_server(server_id)
+        if emby_service:
+            try:
+                success, server_people = await emby_service.item_id_people(item_id=item_id)
+                if success and server_people:
+                    people_list = server_people
+            except Exception as e:
+                LOGGER.debug(f"服务器 {server_id} 获取演员信息失败: {e}")
+
+        if not people_list:
             return
         session = Session()
         try:
@@ -81,12 +94,15 @@ async def check_and_notify_person_update(item_data: dict):
                 if not person_id:
                     continue
                     
-                # 查找收藏了这个演员的用户
-                favorites = session.query(EmbyFavorites, Emby).join(
-                    Emby, EmbyFavorites.embyid == Emby.embyid
+                # 查找收藏了这个演员的用户（按服务器过滤，并通过绑定表获取 tg）
+                favorites = session.query(EmbyFavorites, EmbyServerBinding).join(
+                    EmbyServerBinding,
+                    (EmbyFavorites.server_id == EmbyServerBinding.server_id) &
+                    (EmbyFavorites.embyid == EmbyServerBinding.embyid)
                 ).filter(
+                    EmbyFavorites.server_id == server_id,
                     EmbyFavorites.item_id == person_id,
-                    Emby.tg.isnot(None)
+                    EmbyServerBinding.tg.isnot(None)
                 ).all()
                 
                 if favorites:
@@ -102,17 +118,17 @@ async def check_and_notify_person_update(item_data: dict):
                     )
                     
                     # 给每个收藏了该演员的用户发送通知
-                    for favorite, user in favorites:
-                        await send_update_notification_to_user(user.tg, message)
-                        LOGGER.info(f"已发送演员新作品通知给用户 {user.tg}: {person_name} - {item_name}")
+                    for favorite, binding in favorites:
+                        await send_update_notification_to_user(binding.tg, message)
+                        LOGGER.info(f"[{server_id}] 已发送演员新作品通知给用户 {binding.tg}: {person_name} - {item_name}")
         finally:
             session.close()
             
     except Exception as e:
         LOGGER.error(f"处理演员更新通知失败: {str(e)}")
 
-async def send_new_media_notification(item_data: dict):
-    """发送新媒体通知"""
+async def send_new_media_notification(server_id: str, item_data: dict):
+    """发送新媒体通知（按 server_id）"""
     try:
         item_type = item_data.get("Type", "")
         item_name = item_data.get("Name", "")
@@ -120,34 +136,42 @@ async def send_new_media_notification(item_data: dict):
         # 根据媒体类型构建不同的消息
         if item_type == "Movie":
             # 检查演员相关通知
-            await check_and_notify_person_update(item_data)
+            await check_and_notify_person_update(server_id, item_data)
         elif item_type == "Series":
             # 检查演员相关通知
-            await check_and_notify_person_update(item_data)
+            await check_and_notify_person_update(server_id, item_data)
         elif item_type == "Episode":
             # 检查是否需要发送剧集更新通知
-            await check_and_notify_series_update(item_data)
+            await check_and_notify_series_update(server_id, item_data)
             return
         LOGGER.info(f"已发送新媒体通知: {item_name}")
     except Exception as e:
         LOGGER.error(f"发送新媒体通知失败: {str(e)}")
 
-@router.post("/webhook/medias")
-async def handle_media_webhook(request: Request):
-    """处理Emby媒体库更新webhook"""
+async def _parse_request(request: Request):
+    """解析 webhook 请求体"""
     try:
-        # 检查Content-Type
         content_type = request.headers.get("content-type", "").lower()
-        
         if "application/json" in content_type:
-            # 处理JSON格式
-            webhook_data = await request.json()
+            return await request.json()
         else:
-            # 处理form-data格式
             form_data = await request.form()
             form = dict(form_data)
-            webhook_data = json.loads(form["data"]) if "data" in form else None
-            
+            return json.loads(form["data"]) if "data" in form else None
+    except Exception as e:
+        LOGGER.error(f"解析媒体库 Webhook 失败: {str(e)}")
+        return None
+
+
+@router.post("/webhook/{server_id}/medias")
+async def handle_media_webhook_with_server(server_id: str, request: Request):
+    """处理Emby媒体库更新（带 server_id）"""
+    try:
+        # 校验 server_id 合法
+        if not config.get_server_by_id(server_id):
+            return {"status": "error", "message": f"Invalid server_id: {server_id}"}
+
+        webhook_data = await _parse_request(request)
         if not webhook_data:
             return {
                 "status": "error",
@@ -164,7 +188,7 @@ async def handle_media_webhook(request: Request):
             
             if item_type == "Episode":
                 # 处理剧集更新
-                await check_and_notify_series_update(item_data)
+                await check_and_notify_series_update(server_id, item_data)
                 return {
                     "status": "success",
                     "message": "Episode update notification sent",
@@ -177,7 +201,7 @@ async def handle_media_webhook(request: Request):
                 }
             elif item_type in ["Movie", "Series"]:
                 # 处理新电影或新剧集
-                await send_new_media_notification(item_data)
+                await send_new_media_notification(server_id, item_data)
                 return {
                     "status": "success",
                     "message": "New media notification sent",
@@ -205,4 +229,11 @@ async def handle_media_webhook(request: Request):
         return {
             "status": "error",
             "message": str(e)
-        } 
+        }
+
+
+@router.post("/webhook/medias")
+async def handle_media_webhook_legacy(request: Request):
+    """兼容旧路由（默认 main），建议迁移到 /webhook/{server_id}/medias"""
+    LOGGER.warning("收到旧媒体 Webhook 路由 /webhook/medias，请尽快迁移到 /webhook/{server_id}/medias")
+    return await handle_media_webhook_with_server("main", request)

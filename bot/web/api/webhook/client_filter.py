@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Request, HTTPException
 from bot.sql_helper.sql_emby import Emby, sql_get_emby, sql_update_emby
 from bot import LOGGER, bot, config
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 import json
 import re
 from typing import List
@@ -96,11 +97,21 @@ async def terminate_blocked_session(session_id: str, client_name: str) -> bool:
     """终止被拦截的会话"""
     try:
         reason = f"检测到可疑客户端: {client_name}"
-        success = await emby.terminate_session(session_id, reason)
-        if success:
-            LOGGER.info(f"成功终止可疑会话 {session_id}")
-        else:
-            LOGGER.error(f"终止会话失败 {session_id}")
+
+        # 多服务器适配：遍历所有服务器尝试终止会话
+        all_servers = emby_manager.get_all_servers()
+        success = False
+        for server_id, emby_service in all_servers.items():
+            try:
+                if await emby_service.terminate_session(session_id, reason):
+                    success = True
+                    LOGGER.info(f"成功在服务器 {server_id} 终止可疑会话 {session_id}")
+                    break
+            except Exception as e:
+                LOGGER.debug(f"服务器 {server_id} 终止会话失败: {e}")
+
+        if not success:
+            LOGGER.error(f"所有服务器终止会话失败 {session_id}")
         return success
     except Exception as e:
         LOGGER.error(f"终止会话异常 {session_id}: {str(e)}")
@@ -166,7 +177,24 @@ async def handle_client_filter_webhook(request: Request):
 
             user_details = sql_get_emby(emby_id)
             if getattr(config, "client_filter_block_user", False):
-                block_success = await emby.emby_change_policy(emby_id=emby_id, disable=True)
+                # 多服务器适配：根据用户数据定位服务器，或遍历所有服务器
+                if user_details and user_details.tg:
+                    emby_service, server_config, user_obj = get_user_emby_service(user_details.tg)
+                    if emby_service:
+                        block_success = await emby_service.emby_change_policy(emby_id=emby_id, disable=True)
+                    else:
+                        LOGGER.warning(f"无法定位用户 {user_details.name} 的服务器")
+                else:
+                    # 用户不在数据库中，遍历所有服务器尝试封禁
+                    all_servers = emby_manager.get_all_servers()
+                    for server_id, emby_service in all_servers.items():
+                        try:
+                            if await emby_service.emby_change_policy(emby_id=emby_id, disable=True):
+                                block_success = True
+                                break
+                        except Exception as e:
+                            LOGGER.debug(f"服务器 {server_id} 封禁用户失败: {e}")
+
                 if block_success:
                     if user_details:
                         sql_update_emby(Emby.tg == user_details.tg, lv="c")

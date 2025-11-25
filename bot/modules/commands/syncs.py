@@ -9,11 +9,11 @@ Syncs 功能
 
 4. 小功能 - 给admin的账号开管理员后台，但是会被续期覆盖
 
-5. unbanall 解除所有用户的禁用状态：从 Emby 库中查询出所有用户，解禁完成后根据用户名和数据库中的用户对比，如果之前lv值为 c 的，将其更改为 b（需要确认：/unbanall true）
+5. unban_all 解除所有用户的禁用状态：从 Emby 库中查询出所有用户，解禁完成后根据用户名和数据库中的用户对比，如果之前lv值为 c 的，将其更改为 b（需要确认：/unban_all true）
 
-6. banall 禁用所有用户：从 Emby 库中查询出所有用户，禁用完成后根据用户名和数据库中的用户对比，如果之前lv值为 b 的，将其更改为 c（需要确认：/banall true）
+6. ban_all 禁用所有用户：从 Emby 库中查询出所有用户，禁用完成后根据用户名和数据库中的用户对比，如果之前lv值为 b 的，将其更改为 c（需要确认：/ban_all true）
 
-7. paolu 跑路命令：从 Emby 库中查询出所有用户，和数据库中用户对比，删除记录（需要确认：/paolu true，危险操作）
+7. nuke 跑路命令：从 Emby 库中查询出所有用户，和数据库中用户对比，删除记录（需要确认：/nuke true，危险操作）
 
 """
 import time
@@ -22,20 +22,22 @@ from asyncio import sleep
 from pyrogram import filters
 from pyrogram.errors import FloodWait
 from bot import bot, prefixes, bot_photo, LOGGER, owner, group
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service, get_user_emby_services
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.filters import admins_on_filter
 from bot.func_helper.utils import tem_deluser, split_long_message
 from bot.sql_helper.sql_emby import get_all_emby, Emby, sql_get_emby, sql_update_embys, sql_delete_emby, sql_update_emby
 from bot.func_helper.msg_utils import deleteMessage, sendMessage, sendPhoto, editMessage
 from bot.sql_helper.sql_emby2 import sql_get_emby2
 from bot.sql_helper.sql_favorites import sql_update_favorites, EmbyFavorites
+from bot.sql_helper.sql_server_bindings import delete_user_bindings
 
 # 导入优化模块
 from bot.func_helper.message_formatter import ProgressTracker, MessageFormatter
 from bot.constants.messages import Messages
 
 
-@bot.on_message(filters.command('syncgroupm', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('purge_left', prefixes) & admins_on_filter)
 async def sync_emby_group(_, msg):
     """群组成员同步任务 - 带进度追踪"""
     await deleteMessage(msg)
@@ -43,7 +45,7 @@ async def sync_emby_group(_, msg):
         confirm_delete = msg.command[1]
     except IndexError:
         return await sendMessage(msg,
-                                 '⚠️ 注意: 此操作将删除所有未在群组的Emby账户, 如确定使用请输入 `/syncgroupm true`')
+                                 '⚠️ 注意: 此操作将删除所有未在群组的Emby账户, 如确定使用请输入 `/purge_left true`')
 
     if confirm_delete == 'true':
         sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
@@ -85,13 +87,32 @@ async def sync_emby_group(_, msg):
             processed += 1
 
             if i.tg not in members:
-                if await emby.emby_del(emby_id=i.embyid):
-                    sql_update_emby(Emby.embyid == i.embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d', cr=None, ex=None)
+                # 多服务器：遍历所有绑定服务器删除
+                services = get_user_emby_services(i.tg)
+                if not services:
+                    reply_text = f'#id{i.tg} - [{i.name}](tg://user?id={i.tg}) 无法定位服务器\n'
+                    LOGGER.warning(reply_text)
+                    text += reply_text
+                    continue
+
+                any_success = False
+                for svc, server_cfg, bind_eid in services:
+                    try:
+                        if await svc.emby_del(emby_id=bind_eid):
+                            any_success = True
+                        else:
+                            LOGGER.warning(f"删除服务器 {server_cfg.id} 上的账号失败: embyid={bind_eid}")
+                    except Exception as ex:
+                        LOGGER.warning(f"删除服务器 {server_cfg.id} 上的账号异常: embyid={bind_eid}, err={ex}")
+
+                if any_success:
+                    # 删除数据库记录与绑定
+                    sql_delete_emby(tg=i.tg)
+                    delete_user_bindings(i.tg)
                     tem_deluser()
                     deleted_count += 1
                     reply_text = f'{deleted_count}. #id{i.tg} - [{i.name}](tg://user?id={i.tg}) 删除\n'
                     LOGGER.info(reply_text)
-                    sql_delete_emby(tg=i.tg)
                 else:
                     reply_text = f'#id{i.tg} - [{i.name}](tg://user?id={i.tg}) 删除错误\n'
                     LOGGER.error(reply_text)
@@ -146,7 +167,7 @@ async def sync_emby_group(_, msg):
         LOGGER.info(f"【群组同步任务结束】 - {sign_name} 共检索出 {total} 个账户，处刑 {deleted_count} 个账户，耗时：{times:.3f}s")
 
 
-@bot.on_message(filters.command('syncunbound', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('purge_orphan', prefixes) & admins_on_filter)
 async def sync_emby_unbound(_, msg):
     """扫描未绑定Bot任务 - 带进度追踪"""
     await deleteMessage(msg)
@@ -167,16 +188,32 @@ async def sync_emby_unbound(_, msg):
     send = await sendMessage(msg, tracker.format_progress(), send=True)
     start = time.perf_counter()
 
-    # 步骤 1: 获取 Emby 用户
+    # 步骤 1: 获取所有服务器的 Emby 用户（多服务器适配）
     tracker.next_step()
-    await editMessage(send, tracker.format_progress("正在连接 Emby 服务器..."))
+    await editMessage(send, tracker.format_progress("正在连接所有 Emby 服务器..."))
 
-    success, alluser = await emby.users()
-    if not success or alluser is None:
-        return await editMessage(send, "⚡扫描未绑定Bot任务\n\n结束！获取 Emby 用户列表失败。")
+    all_servers = emby_manager.get_all_servers()
+    if not all_servers:
+        return await editMessage(send, "⚡扫描未绑定Bot任务\n\n结束！没有可用的服务器。")
+
+    alluser = []
+    for server_id, emby_service in all_servers.items():
+        try:
+            success, users = await emby_service.users()
+            if success and users:
+                # 为每个用户添加服务器标识
+                for u in users:
+                    u['_server_id'] = server_id
+                    u['_emby_service'] = emby_service
+                alluser.extend(users)
+        except Exception as e:
+            LOGGER.warning(f"获取服务器 {server_id} 用户列表失败: {e}")
+
+    if not alluser:
+        return await editMessage(send, "⚡扫描未绑定Bot任务\n\n结束！所有服务器都无法获取用户列表。")
 
     total = len(alluser)
-    await editMessage(send, tracker.format_progress(f"找到 {total} 个 Emby 用户\n准备检查..."))
+    await editMessage(send, tracker.format_progress(f"找到 {total} 个 Emby 用户（来自 {len(all_servers)} 个服务器）\n准备检查..."))
 
     # 步骤 2: 检查绑定状态
     tracker.next_step()
@@ -192,17 +229,20 @@ async def sync_emby_unbound(_, msg):
             # 跳过管理员账号
             if v['Policy'] and not bool(v['Policy']['IsAdministrator']):
                 embyid = v['Id']
+                server_id = v.get('_server_id')
+                emby_service = v.get('_emby_service')
+
                 # 查询无异常，并且无sql记录
                 e = sql_get_emby(embyid)
                 if e is None:
                     e1 = sql_get_emby2(name=embyid)
                     if e1 is None:
                         unbound_count += 1
-                        if confirm_delete:
-                            await emby.emby_del(emby_id=embyid)
-                            text += f"🎯 #{v['Name']} 未绑定bot，已删除\n"
+                        if confirm_delete and emby_service:
+                            await emby_service.emby_del(emby_id=embyid)
+                            text += f"🎯 #{v['Name']} (服务器: {server_id}) 未绑定bot，已删除\n"
                         else:
-                            text += f"🎯 #{v['Name']} 未绑定bot\n"
+                            text += f"🎯 #{v['Name']} (服务器: {server_id}) 未绑定bot\n"
         except Exception as e:
             LOGGER.warning(e)
 
@@ -240,7 +280,7 @@ async def sync_emby_unbound(_, msg):
 ⏱ **耗时：** {times:.2f}秒
 🕐 **完成时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-{'' if confirm_delete else '💡 **提示：** 如需删除这些账户，请使用 `/syncunbound true`'}
+{'' if confirm_delete else '💡 **提示：** 如需删除这些账户，请使用 `/purge_orphan true`'}
 """
     else:
         summary = f"""
@@ -257,15 +297,29 @@ async def sync_emby_unbound(_, msg):
     LOGGER.info(f"{sign_name} 扫描未绑定Bot任务结束，共检索出 {total} 个账户，{unbound_count}个未绑定，耗时：{times:.3f}s")
 
 
-@bot.on_message(filters.command('bindall_id', prefixes) & filters.user(owner))
+@bot.on_message(filters.command('sync_ids', prefixes) & filters.user(owner))
 async def bindall_id(_, msg):
     await deleteMessage(msg)
     send = await msg.reply(f'** 一键更新用户们Emby_id，正在启动ing，请等待运行结束......**')
     LOGGER.info('一键更新绑定所有用户的Emby_id，正在启动ing，请等待运行结束......')
-    success, rst = await emby.users()
-    if not success:
-        await send.edit(rst)
-        LOGGER.error(rst)
+
+    # 多服务器适配：遍历所有服务器
+    all_servers = emby_manager.get_all_servers()
+    if not all_servers:
+        await send.edit("❌ 没有可用的服务器")
+        return
+
+    rst = []
+    for server_id, emby_service in all_servers.items():
+        try:
+            success, users = await emby_service.users()
+            if success and users:
+                rst.extend(users)
+        except Exception as e:
+            LOGGER.warning(f"获取服务器 {server_id} 用户列表失败: {e}")
+
+    if not rst:
+        await send.edit("❌ 所有服务器都无法获取用户列表")
         return
 
     unknow_txt = '**非数据库人员名单**\n\n'
@@ -300,12 +354,18 @@ async def bindall_id(_, msg):
         LOGGER.error('数据库批量更新操作出错，请检查重试')
 
 
-@bot.on_message(filters.command('embyadmin', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('emby_grant_admin', prefixes) & admins_on_filter)
 async def reload_admins(_, msg):
     await deleteMessage(msg)
     e = sql_get_emby(tg=msg.from_user.id)
     if e.embyid is not None:
-        await emby.emby_change_policy(emby_id=e.embyid, admin=True)
+        # 获取用户对应的服务实例（多服务器适配）
+        emby_service, server_config, user = get_user_emby_service(msg.from_user.id)
+        if not emby_service:
+            LOGGER.error(f"{msg.from_user.first_name} - {msg.from_user.id} 无法定位服务器")
+            return await sendMessage(msg, "👮🏻 授权失败。无法连接到您所在的服务器", timer=60)
+
+        await emby_service.emby_change_policy(emby_id=e.embyid, admin=True)
         LOGGER.info(f"{msg.from_user.first_name} - {msg.from_user.id} 开启了 emby 后台")
         await sendMessage(msg, "👮🏻 授权完成。已开启emby后台", timer=60)
     else:
@@ -313,14 +373,14 @@ async def reload_admins(_, msg):
         await sendMessage(msg, "👮🏻 授权失败。未查询到绑定账户", timer=60)
 
 
-@bot.on_message(filters.command('deleted', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('purge_dead', prefixes) & admins_on_filter)
 async def clear_deleted_account(_, msg):
     await deleteMessage(msg)
     try:
         confirm_delete = msg.command[1]
     except IndexError:
         return await sendMessage(msg,
-                                 '⚠️ 注意: 此操作将清理所有注销用户, 如确定使用请输入 `/deleted true`')
+                                 '⚠️ 注意: 此操作将清理所有注销用户, 如确定使用请输入 `/purge_dead true`')
     
     if confirm_delete == 'true':
         send = await msg.reply("🔍 正在运行清理程序...")
@@ -345,14 +405,14 @@ async def clear_deleted_account(_, msg):
             await sendMessage(msg, c)
 
 
-@bot.on_message(filters.command('kick_not_emby', prefixes) & admins_on_filter & filters.group)
+@bot.on_message(filters.command('kick_nonemby', prefixes) & admins_on_filter & filters.group)
 async def kick_not_emby(_, msg):
     await deleteMessage(msg)
     try:
         open_kick = msg.command[1]
     except IndexError:
         return await sendMessage(msg,
-                                 '注意: 此操作会将 当前群组中无emby账户的选手kick, 如确定使用请输入 `/kick_not_emby true`')
+                                 '注意: 此操作会将 当前群组中无emby账户的选手kick, 如确定使用请输入 `/kick_nonemby true`')
     if open_kick == 'true':
         sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
         LOGGER.info(f"{sign_name} 执行了踢出非emby用户的操作")
@@ -392,8 +452,15 @@ async def restore_from_db(_, msg):
         for embyuser in embyusers:
             if embyuser.tg in chat_members:
                 try:
+                    # 获取用户对应的服务实例（多服务器适配）
+                    emby_service, server_config, user = get_user_emby_service(embyuser.tg)
+                    if not emby_service:
+                        text += f'**- ❎ 无法定位服务器\n- ❎ 跳过恢复用户：#id{embyuser.tg} - [{embyuser.name}](tg://user?id={embyuser.tg}) \n**'
+                        LOGGER.error(f"【恢复账户】：无法定位服务器！{embyuser.name} 恢复失败！")
+                        continue
+
                     # emby api操作
-                    data = await emby.emby_create(name=embyuser.name, days=embyuser.us)
+                    data = await emby_service.emby_create(name=embyuser.name, days=embyuser.us)
                     if not data:
                         text += f'**- ❎ 已有此账户名\n- ❎ 或检查有无特殊字符\n- ❎ 或emby服务器连接不通\n- ❎ 跳过恢复用户：#id{embyuser.tg} - [{embyuser.name}](tg://user?id={embyuser.tg}) \n**'
                         LOGGER.error(
@@ -433,7 +500,7 @@ async def restore_from_db(_, msg):
         await sendMessage(msg, '** 恢复完成 **')
 
 
-@bot.on_message(filters.command('scan_embyname', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('scan_duplicate', prefixes) & admins_on_filter)
 async def scan_embyname(_, msg):
     await deleteMessage(msg)
     send = await msg.reply("🔍 正在扫描重复用户名...")
@@ -465,7 +532,7 @@ async def scan_embyname(_, msg):
         for user in users:
             text += f"- TG ID: `{user.tg}` | Emby ID: `{user.embyid}`\n"
         text += "\n"
-    text += "\n使用 `/only_rm_record tg_id` 可删除指定用户的数据库记录（此命令不会删除 Emby 账号）"
+    text += "\n使用 `/del_record tg_id` 可删除指定用户的数据库记录（此命令不会删除 Emby 账号）"
     # 分段发送消息，避免超过长度限制
     n = 1000
     chunks = [text[i:i + n] for i in range(0, len(text), n)]
@@ -475,19 +542,19 @@ async def scan_embyname(_, msg):
         f"{sign_name} 扫描重复用户名任务结束，共发现 {len(duplicate_names)} 个重复用户名")
 
 
-@bot.on_message(filters.command('unbanall', prefixes) & filters.user(owner))
+@bot.on_message(filters.command('unban_all', prefixes) & filters.user(owner))
 async def unban_all_users(_, msg):
     """
     解除所有用户的禁用状态
     从 Emby 库中查询出所有用户，解禁完成后根据用户名和数据库中的用户对比，如果之前lv值为 c 的，将其更改为 b
-    需要确认：/unbanall true
+    需要确认：/unban_all true
     """
     await deleteMessage(msg)
     try:
         confirm_unban = msg.command[1]
     except IndexError:
         return await sendMessage(msg,
-                                 '⚠️ 注意: 此操作将解除所有用户的禁用状态, 如确定使用请输入 `/unbanall true`')
+                                 '⚠️ 注意: 此操作将解除所有用户的禁用状态, 如确定使用请输入 `/unban_all true`')
     
     if confirm_unban == 'true':
         sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
@@ -495,33 +562,50 @@ async def unban_all_users(_, msg):
         send = await sendPhoto(msg, photo=bot_photo, caption="⚡解除所有用户禁用状态任务\n  **正在开启中...**",
                                send=True)
         
-        # 从 Emby 库中查询出所有用户
-        success, allusers = await emby.users()
-        if not success or allusers is None:
-            return await send.edit("⚡解除禁用任务\n\n结束！获取 Emby 用户列表失败。")
+        # 从所有 Emby 服务器查询用户（多服务器适配）
+        all_servers = emby_manager.get_all_servers()
+        if not all_servers:
+            return await send.edit("⚡解除禁用任务\n\n结束！没有可用的服务器。")
+
+        allusers = []
+        for server_id, emby_service in all_servers.items():
+            try:
+                success, users = await emby_service.users()
+                if success and users:
+                    for u in users:
+                        u['_server_id'] = server_id
+                        u['_emby_service'] = emby_service
+                    allusers.extend(users)
+            except Exception as e:
+                LOGGER.warning(f"获取服务器 {server_id} 用户列表失败: {e}")
+
+        if not allusers:
+            return await send.edit("⚡解除禁用任务\n\n结束！所有服务器都无法获取用户列表。")
+
         allusers_in_db = get_all_emby(Emby.name.isnot(None) if hasattr(Emby.name, "isnot") else Emby.name != None)
-        
+
         unban_user_in_bot_count = unban_user_in_emby_count = index = 0
         text = ''
         start = time.perf_counter()
         for emby_user in allusers:
-            
+
             try:
                 # 跳过管理员账户
                 if emby_user.get('Policy') and bool(emby_user['Policy'].get('IsAdministrator', False)):
                     continue
-                
+
                 emby_name = emby_user.get('Name')
                 emby_id = emby_user.get('Id')
-                
-                if not emby_name or not emby_id:
+                emby_service = emby_user.get('_emby_service')
+
+                if not emby_name or not emby_id or not emby_service:
                     continue
-                
+
                 # 根据用户名在数据库中查找用户
                 db_user = next((user for user in allusers_in_db if user.name == emby_name), None)
-                
+
                 # 调用emby API解除禁用
-                if await emby.emby_change_policy(emby_id=emby_id, disable=False):
+                if await emby_service.emby_change_policy(emby_id=emby_id, disable=False):
                     unban_user_in_emby_count += 1
                     if not db_user:
                         # 数据库中未找到该用户，跳过
@@ -565,19 +649,19 @@ async def unban_all_users(_, msg):
         LOGGER.info(f"【解除所有用户禁用状态任务结束】 - {sign_name} 共检索出 {len(allusers)} 个 Emby 账户\n成功解禁 {unban_user_in_emby_count} 个Emby账户\n成功设置等级 {unban_user_in_bot_count}个用户\n耗时：{times:.3f}s")
 
 
-@bot.on_message(filters.command('banall', prefixes) & filters.user(owner))
+@bot.on_message(filters.command('ban_all', prefixes) & filters.user(owner))
 async def ban_all_users(_, msg):
     """
     禁用所有用户
     从 Emby 库中查询出所有用户，禁用完成后根据用户名和数据库中的用户对比，如果之前lv值为 b 的，将其更改为 c
-    需要确认：/banall true
+    需要确认：/ban_all true
     """
     await deleteMessage(msg)
     try:
         confirm_ban = msg.command[1]
     except IndexError:
         return await sendMessage(msg,
-                                 '⚠️ 注意: 此操作将禁用所有用户, 如确定使用请输入 `/banall true`')
+                                 '⚠️ 注意: 此操作将禁用所有用户, 如确定使用请输入 `/ban_all true`')
     
     if confirm_ban == 'true':
         sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
@@ -585,33 +669,50 @@ async def ban_all_users(_, msg):
         send = await sendPhoto(msg, photo=bot_photo, caption="⚡禁用所有用户任务\n  **正在开启中...**",
                                send=True)
         
-        # 从 Emby 库中查询出所有用户
-        success, allusers = await emby.users()
-        if not success or allusers is None:
-            return await send.edit("⚡禁用所有用户任务\n\n结束！获取 Emby 用户列表失败。")
+        # 从所有 Emby 服务器查询用户（多服务器适配）
+        all_servers = emby_manager.get_all_servers()
+        if not all_servers:
+            return await send.edit("⚡禁用所有用户任务\n\n结束！没有可用的服务器。")
+
+        allusers = []
+        for server_id, emby_service in all_servers.items():
+            try:
+                success, users = await emby_service.users()
+                if success and users:
+                    for u in users:
+                        u['_server_id'] = server_id
+                        u['_emby_service'] = emby_service
+                    allusers.extend(users)
+            except Exception as e:
+                LOGGER.warning(f"获取服务器 {server_id} 用户列表失败: {e}")
+
+        if not allusers:
+            return await send.edit("⚡禁用所有用户任务\n\n结束！所有服务器都无法获取用户列表。")
+
         allusers_in_db = get_all_emby(Emby.name.isnot(None) if hasattr(Emby.name, "isnot") else Emby.name != None)
         ban_user_in_bot_count = ban_user_in_emby_count = index = 0
         text = ''
         start = time.perf_counter()
         for emby_user in allusers:
-            
+
             try:
                 # 跳过管理员账户
                 if emby_user.get('Policy') and bool(emby_user['Policy'].get('IsAdministrator', False)):
                     continue
-                
+
                 emby_name = emby_user.get('Name')
                 emby_id = emby_user.get('Id')
-                
-                if not emby_name or not emby_id:
+                emby_service = emby_user.get('_emby_service')
+
+                if not emby_name or not emby_id or not emby_service:
                     continue
-                
+
                 # 根据用户名在数据库中查找用户
                 db_user = next((user for user in allusers_in_db if user.name == emby_name), None)
-                
-                
+
+
                 # 调用emby API禁用用户
-                if await emby.emby_change_policy(emby_id=emby_id, disable=True):
+                if await emby_service.emby_change_policy(emby_id=emby_id, disable=True):
                     ban_user_in_emby_count += 1
                     if not db_user:
                         # 数据库中未找到该用户，跳过
@@ -653,18 +754,18 @@ async def ban_all_users(_, msg):
         LOGGER.info(f"【禁用所有用户任务结束】 - {sign_name} 共检索出 {len(allusers)} 个 Emby 账户\n成功禁用 {ban_user_in_emby_count} 个Emby账户\n成功设置等级 {ban_user_in_bot_count}个用户\n耗时：{times:.3f}s")
 
 
-@bot.on_message(filters.command('paolu', prefixes) & filters.user(owner))
+@bot.on_message(filters.command('nuke', prefixes) & filters.user(owner))
 async def delete_all_users(_, msg):
     """
     跑路命令：从 Emby 库中查询出所有用户，和数据库中用户对比，删除数据库中用户
-    需要确认：/paolu true
+    需要确认：/nuke true
     """
     await deleteMessage(msg)
     try:
         confirm_delete = msg.command[1]
     except IndexError:
         return await sendMessage(msg,
-                                 '⚠️ 注意: 是否跑路，删除所有账户！！！！, 如确定使用请输入 `/paolu true`')
+                                 '⚠️ 注意: 是否跑路，删除所有账户！！！！, 如确定使用请输入 `/nuke true`')
     
     if confirm_delete == 'true':
         sign_name = f'{msg.sender_chat.title}' if msg.sender_chat else f'{msg.from_user.first_name}'
@@ -672,27 +773,46 @@ async def delete_all_users(_, msg):
         send = await sendPhoto(msg, photo=bot_photo, caption="⚡跑路命令任务\n  **正在开启中...（危险操作）**",
                                send=True)
         
-        # 从 Emby 库中查询出所有用户
-        success, allusers = await emby.users()
-        if not success or allusers is None:
-            return await send.edit("⚡跑路命令任务\n\n结束！获取 Emby 用户列表失败。")
+        # 从所有 Emby 服务器查询用户（多服务器适配）
+        all_servers = emby_manager.get_all_servers()
+        if not all_servers:
+            return await send.edit("⚡跑路命令任务\n\n结束！没有可用的服务器。")
+
+        allusers = []
+        for server_id, emby_service in all_servers.items():
+            try:
+                success, users = await emby_service.users()
+                if success and users:
+                    for u in users:
+                        u['_server_id'] = server_id
+                        u['_emby_service'] = emby_service
+                    allusers.extend(users)
+            except Exception as e:
+                LOGGER.warning(f"获取服务器 {server_id} 用户列表失败: {e}")
+
+        if not allusers:
+            return await send.edit("⚡跑路命令任务\n\n结束！所有服务器都无法获取用户列表。")
+
         allusers_in_db = get_all_emby(Emby.name.isnot(None) if hasattr(Emby.name, "isnot") else Emby.name != None)
-        
+
         delete_user_in_emby_count = delete_user_in_bot_count = index = 0
         text = ''
         start = time.perf_counter()
         for emby_user in allusers:
-            
+
             try:
                 # 跳过管理员账户
                 if emby_user.get('Policy') and bool(emby_user['Policy'].get('IsAdministrator', False)):
                     continue
-                
+
                 emby_name = emby_user.get('Name')
                 emby_id = emby_user.get('Id')
-                if not emby_name or not emby_id:
+                emby_service = emby_user.get('_emby_service')
+
+                if not emby_name or not emby_id or not emby_service:
                     continue
-                if await emby.emby_del(emby_id=emby_id):    
+
+                if await emby_service.emby_del(emby_id=emby_id):    
                     delete_user_in_emby_count += 1
                     index += 1
                     db_user = next((user for user in allusers_in_db if user.name == emby_name), None)

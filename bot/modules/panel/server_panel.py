@@ -4,8 +4,9 @@
 """
 from datetime import datetime, timezone, timedelta
 from pyrogram import filters
-from bot import bot, emby_line, emby_whitelist_line
-from bot.func_helper.emby import emby
+from bot import bot
+from bot.func_helper.emby_utils import get_user_emby_service, get_user_emby_line, get_user_primary_server_id
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.filters import user_in_group_on_filter
 from bot.sql_helper.sql_emby import sql_get_emby
 from bot.func_helper.fix_bottons import cr_page_server
@@ -33,22 +34,26 @@ async def server(_, call):
         server_info = ''.join([item['server'] for item in sever if item['id'] == j])
 
     pwd = '空' if not data.pwd else data.pwd
-    line = ''
-    if data.lv == 'b':
-        line = f'{emby_line}'
-    elif data.lv == 'a':
-        line = f'{emby_line}'
-        if emby_whitelist_line:
-            line += f'\n{emby_whitelist_line}'
-    else:
-        line = ' - **无权查看**'
+    # 根据用户所属服务器和等级获取对应线路
+    user_server_id = get_user_primary_server_id(call.from_user.id) or 'main'
+    line = get_user_emby_line(user_server_id, data.lv)
     try:
-        online = await emby.get_current_playing_count()
-        if online == -1:
+        # 多服务器适配：聚合所有服务器的在线人数
+        all_servers = emby_manager.get_all_servers()
+        online = 0
+        if all_servers:
+            for server_id, emby_service in all_servers.items():
+                try:
+                    count = await emby_service.get_current_playing_count()
+                    if count != -1:
+                        online += count
+                except Exception:
+                    pass
+        else:
             online = 'Emby服务器断连 ·0'
     except Exception:
         online = 'Emby服务器断连 ·0'
-    text = f'**▎↓目前线路 & 用户密码：**`{pwd}`\n' \
+    text = f'**▎↓目前线路(主服务器 {user_server_id}) & 用户密码：**`{pwd}`\n' \
            f'{line}\n\n' \
            f'{server_info}' \
            f'· 🎬 在线 | **{online}** 人\n\n' \

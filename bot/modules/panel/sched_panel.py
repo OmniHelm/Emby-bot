@@ -1,5 +1,4 @@
 import asyncio
-import os
 
 import aiohttp
 from pyrogram import filters
@@ -89,7 +88,7 @@ async def sched_change_policy(_, call):
         await sched_panel(_, call.message)
 
 
-@bot.on_message(filters.command('check_ex', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('check_expiry', prefixes) & admins_on_filter)
 async def check_ex_admin(_, msg):
     await deleteMessage(msg)
     confirm = False
@@ -101,7 +100,7 @@ async def check_ex_admin(_, msg):
         send = await msg.reply("[ExpireCheck] 正在运行到期检测...")
         await asyncio.gather(check_expired(), send.edit("[ExpireCheck] 到期检测完成"))
     else:
-        await msg.reply("⚠️ 请输入 `/check_ex true` 确认运行")
+        await msg.reply("⚠️ 请输入 `/check_expiry true` 确认运行")
 
 
 # bot数据库手动备份
@@ -110,17 +109,17 @@ async def manual_backup_db(_, msg):
     await asyncio.gather(deleteMessage(msg), auto_backup_db())
 
 
-@bot.on_message(filters.command('days_ranks', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('ranks_daily', prefixes) & admins_on_filter)
 async def day_r_ranks(_, msg):
     await asyncio.gather(msg.delete(), day_ranks(pin_mode=False))
 
 
-@bot.on_message(filters.command('week_ranks', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('ranks_weekly', prefixes) & admins_on_filter)
 async def week_r_ranks(_, msg):
     await asyncio.gather(msg.delete(), week_ranks(pin_mode=False))
 
 
-@bot.on_message(filters.command('low_activity', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('check_activity', prefixes) & admins_on_filter)
 async def run_low_ac(_, msg):
     await deleteMessage(msg)
     confirm = False
@@ -132,9 +131,9 @@ async def run_low_ac(_, msg):
         send = await msg.reply("[ActivityCheck] 正在检测不活跃用户...")
         await asyncio.gather(check_low_activity(), send.delete())
     else:
-        await msg.reply("⚠️ 请输入 `/low_activity true` 确认运行")
+        await msg.reply("⚠️ 请输入 `/check_activity true` 确认运行")
 
-@bot.on_message(filters.command('uranks', prefixes) & admins_on_filter)
+@bot.on_message(filters.command('ranks_playtime', prefixes) & admins_on_filter)
 async def shou_dong_uplayrank(_, msg):
     await deleteMessage(msg)
     try:
@@ -142,7 +141,7 @@ async def shou_dong_uplayrank(_, msg):
         await user_plays_rank(days=days, uplays=False)
     except (IndexError, ValueError):
         await msg.reply(
-            f"🔔 请输入 `/uranks 天数`，此运行手动不会影响{credits}的结算（仅定时运行时结算），放心使用。\n"
+            f"🔔 请输入 `/ranks_playtime 天数`，此运行手动不会影响{credits}的结算（仅定时运行时结算），放心使用。\n"
             f"定时结算状态: {_open.uplays}")
 @bot.on_message(filters.command('sync_favorites', prefixes) & admins_on_filter)
 async def sync_favorites_admin(_, msg):
@@ -158,12 +157,9 @@ async def restart_bot(_, msg):
     schedall.restart_chat_id = send.chat.id
     schedall.restart_msg_id = send.id
     save_config()
-    try:
-        # some code here
-        LOGGER.info("重启")
-        os.execl('/bin/systemctl', 'systemctl', 'restart', 'embybot')  # 用当前进程执行systemctl命令，重启embybot服务
-    except FileNotFoundError:
-        exit(1)
+    LOGGER.info("重启")
+    # Docker 环境下直接退出进程，依赖 restart: always 策略自动重启
+    exit(0)
 
 
 @bot.on_callback_query(filters.regex('uranks') & user_in_group_on_filter)
@@ -238,7 +234,8 @@ async def update_bot(force: bool = False, msg: Message = None, manual: bool = Fa
                     auto_update.commit_sha = latest_commit
                     auto_update.up_description = up_description
                     save_config()
-                    os.execl(executable, executable, *argv)
+                    # Docker 环境下直接退出进程，依赖 restart: always 策略自动重启
+                    exit(0)
                 else:
                     message = "[AutoUpdate] 未检测到更新"
                     await bot.send_message(chat_id=group[0], text=message) if not msg else await msg.edit(message)

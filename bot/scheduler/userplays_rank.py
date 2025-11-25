@@ -3,7 +3,8 @@ import cn2an
 from datetime import datetime, timezone, timedelta
 
 from bot import bot, bot_photo, group, credits, LOGGER, ranks, _open 
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.utils import convert_to_beijing_time, convert_s, get_users, tem_deluser, _async_ttl_cache
 from bot.sql_helper import Session
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_embys, Emby, sql_update_emby
@@ -11,18 +12,24 @@ from bot.func_helper.fix_bottons import plays_list_button
 
 
 class Uplaysinfo:
-    client = emby
+    # client = emby  # 已废弃：多服务器模式不再使用全局单例
 
     @classmethod
     async def users_playback_list(cls, days):
         async def _fetch():
-            try:
-                play_list = await emby.emby_cust_commit(emby_id=None, days=days, method='sp')
-            except Exception as e:
-                print(f"Error fetching playback list: {e}")
-                return None, 1, 1
+            # 多服务器适配：聚合所有服务器的播放列表
+            all_servers = emby_manager.get_all_servers()
+            play_list = []
 
-            if play_list is None:
+            for server_id, emby_service in all_servers.items():
+                try:
+                    server_play_list = await emby_service.emby_cust_commit(emby_id=None, days=days, method='sp')
+                    if server_play_list:
+                        play_list.extend(server_play_list)
+                except Exception as e:
+                    LOGGER.warning(f"从服务器 {server_id} 获取播放列表失败: {e}")
+
+            if not play_list:
                 return None, 1, 1
 
             with Session() as session:
@@ -109,9 +116,25 @@ class Uplaysinfo:
     @staticmethod
     async def check_low_activity():
         now = datetime.now(timezone(timedelta(hours=8)))
-        success, users = await emby.users()
-        if not success:
-            return await bot.send_message(chat_id=group[0], text='⭕ 调用emby api失败')
+
+        # 多服务器适配：聚合所有服务器的用户列表
+        all_servers = emby_manager.get_all_servers()
+        users = []
+        for server_id, emby_service in all_servers.items():
+            try:
+                success, server_users = await emby_service.users()
+                if success and server_users:
+                    # 为每个用户添加服务器信息
+                    for u in server_users:
+                        u['_server_id'] = server_id
+                        u['_emby_service'] = emby_service
+                    users.extend(server_users)
+            except Exception as e:
+                LOGGER.warning(f"从服务器 {server_id} 获取用户失败: {e}")
+
+        if not users:
+            return await bot.send_message(chat_id=group[0], text='⭕ 所有服务器均无法获取用户列表')
+
         from bot import config
         activity_check_days = config.activity_check_days
         msg = f'正在执行**{activity_check_days}天活跃检测**...\n'
@@ -128,7 +151,13 @@ class Uplaysinfo:
                     ac_date = "None"
                 finally:
                     if ac_date == "None" or ac_date + timedelta(days=15) < now:
-                        if await emby.emby_del(emby_id=e.embyid):
+                        # 从用户dict中获取对应的服务实例
+                        emby_service = user.get('_emby_service')
+                        if not emby_service:
+                            LOGGER.warning(f"无法定位服务器: {e.name}")
+                            continue
+
+                        if await emby_service.emby_del(emby_id=e.embyid):
                             sql_update_emby(Emby.embyid == e.embyid, embyid=None, name=None, pwd=None, pwd2=None, lv='d',
                                             cr=None, ex=None)
                             tem_deluser()
@@ -138,12 +167,18 @@ class Uplaysinfo:
                             msg += f'**🔋活跃检测** - [{e.name}](tg://user?id={e.tg})\n#id{e.tg} 禁用后未解禁，执行删除失败。\n\n'
                             LOGGER.info(f"【活跃检测】- 删除账户失败 {user['Name']} #id{e.tg}")
             elif e.lv == 'b':
+                # 从用户dict中获取对应的服务实例
+                emby_service = user.get('_emby_service')
+                if not emby_service:
+                    LOGGER.warning(f"无法定位服务器: {e.name}")
+                    continue
+
                 try:
                     ac_date = convert_to_beijing_time(user["LastActivityDate"])
-                    
+
                     # print(e.name, ac_date, now)
                     if ac_date + timedelta(days=activity_check_days) < now:
-                        if await emby.emby_change_policy(emby_id=user["Id"], disable=True):
+                        if await emby_service.emby_change_policy(emby_id=user["Id"], disable=True):
                             sql_update_emby(Emby.embyid == user["Id"], lv='c')
                             msg += f"**🔋活跃检测** - [{user['Name']}](tg://user?id={e.tg})\n#id{e.tg} {activity_check_days}天未活跃，禁用\n\n"
                             LOGGER.info(f"【活跃检测】- 禁用账户 {user['Name']} #id{e.tg}：{activity_check_days}天未活跃")
@@ -151,7 +186,7 @@ class Uplaysinfo:
                             msg += f"**🎂活跃检测** - [{user['Name']}](tg://user?id={e.tg})\n{activity_check_days}天未活跃，禁用失败啦！检查emby连通性\n\n"
                             LOGGER.info(f"【活跃检测】- 禁用账户 {user['Name']} #id{e.tg}：禁用失败啦！检查emby连通性")
                 except KeyError:
-                    if await emby.emby_change_policy(emby_id=user["Id"], disable=True):
+                    if await emby_service.emby_change_policy(emby_id=user["Id"], disable=True):
                         sql_update_emby(Emby.embyid == user["Id"], lv='c')
                         msg += f"**🔋活跃检测** - [{user['Name']}](tg://user?id={e.tg})\n#id{e.tg} 注册后未活跃，禁用\n\n"
                         LOGGER.info(f"【活跃检测】- 禁用账户 {user['Name']} #id{e.tg}：注册后未活跃禁用")

@@ -1,6 +1,6 @@
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_manager import emby_manager
 from pyrogram import filters
-from bot import bot, bot_name
+from bot import bot, bot_name, config, LOGGER
 from bot.func_helper.filters import admins_on_filter
 from bot.func_helper.msg_utils import editMessage
 from bot.func_helper.fix_bottons import whitelist_page_ikb, normaluser_page_ikb,devices_page_ikb 
@@ -91,10 +91,46 @@ async def user_devices(_, call):
     # 计算offset
     offset = (page - 1) * page_size
     
-    # 获取用户设备信息
-    success, result, has_prev, has_next = await emby.get_emby_user_devices(offset=offset, limit=page_size)
-    if not success:
-        return await callAnswer(call, '🤕 Emby 服务器连接失败!')
+    # 获取用户设备信息（多服务器版本：汇总所有服务器）
+    all_servers = emby_manager.get_all_servers()
+    if not all_servers:
+        return await callAnswer(call, '❌ 没有可用的服务器')
+
+    # 汇总所有服务器的用户设备信息
+    all_results = []
+    for server_id, emby_service in all_servers.items():
+        try:
+            success, result, _, _ = await emby_service.get_emby_user_devices(offset=0, limit=10000)
+            if success and result:
+                all_results.extend(result)
+        except Exception as e:
+            LOGGER.warning(f"获取服务器 {server_id} 设备列表失败: {e}")
+            continue
+
+    if not all_results:
+        return await callAnswer(call, '🤕 未找到任何设备信息')
+
+    # 按用户名去重并合并统计
+    user_devices = {}
+    for name, device_count, ip_count in all_results:
+        if name in user_devices:
+            user_devices[name]['devices'] += device_count
+            user_devices[name]['ips'] += ip_count
+        else:
+            user_devices[name] = {'devices': device_count, 'ips': ip_count}
+
+    # 转换为列表并分页
+    sorted_users = sorted(user_devices.items())
+    total_users = len(sorted_users)
+    start_idx = offset
+    end_idx = min(offset + page_size, total_users)
+    page_users = sorted_users[start_idx:end_idx]
+
+    has_prev = offset > 0
+    has_next = end_idx < total_users
+    result = [(name, data['devices'], data['ips']) for name, data in page_users]
+
+    success = True
 
     text = '**💠 用户设备列表**\n\n'
     for name, device_count, ip_count in result:

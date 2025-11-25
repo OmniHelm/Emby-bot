@@ -17,7 +17,7 @@ from bot.sql_helper.sql_emby import sql_update_emby, Emby, sql_get_emby
 
 
 # 新增管理名单
-@bot.on_message(filters.command('proadmin', prefixes=prefixes) & filters.user(owner))
+@bot.on_message(filters.command('admin_add', prefixes=prefixes) & filters.user(owner))
 async def pro_admin(_, msg):
     if msg.reply_to_message is None:
         try:
@@ -26,7 +26,7 @@ async def pro_admin(_, msg):
         except (IndexError, KeyError, BadRequest):
             await deleteMessage(msg)
             return await sendMessage(msg,
-                                     '**请先给我一个正确的id！**\n输入格式为：/proadmin [tgid]或**命令回复想要授权的人**',
+                                     '**请先给我一个正确的id！**\n输入格式为：/admin_add [tgid]或**命令回复想要授权的人**',
                                      timer=60)
     else:
         uid = msg.reply_to_message.from_user.id
@@ -45,7 +45,7 @@ async def pro_admin(_, msg):
 
 
 # 增加白名单
-@bot.on_message(filters.command('prouser', prefixes=prefixes) & admins_on_filter)
+@bot.on_message(filters.command('vip_add', prefixes=prefixes) & admins_on_filter)
 async def pro_user(_, msg):
     if msg.reply_to_message is None:
         try:
@@ -54,7 +54,7 @@ async def pro_user(_, msg):
         except (IndexError, KeyError, BadRequest):
             await deleteMessage(msg)
             return await sendMessage(msg,
-                                     '**请先给我一个正确的id！**\n输入格式为：/prouser [tgid]或**命令回复想要授权的人**',
+                                     '**请先给我一个正确的id！**\n输入格式为：/vip_add [tgid]或**命令回复想要授权的人**',
                                      timer=60)
     else:
         uid = msg.reply_to_message.from_user.id
@@ -73,7 +73,7 @@ async def pro_user(_, msg):
 
 
 # 减少管理
-@bot.on_message(filters.command('revadmin', prefixes=prefixes) & filters.user(owner))
+@bot.on_message(filters.command('admin_remove', prefixes=prefixes) & filters.user(owner))
 async def del_admin(_, msg):
     if msg.reply_to_message is None:
         try:
@@ -82,7 +82,7 @@ async def del_admin(_, msg):
         except (IndexError, KeyError, BadRequest):
             await deleteMessage(msg)
             return await sendMessage(msg,
-                                     '**请先给我一个正确的id！**\n输入格式为：/revadmin [tgid]或**命令回复想要取消授权的人**',
+                                     '**请先给我一个正确的id！**\n输入格式为：/admin_remove [tgid]或**命令回复想要取消授权的人**',
                                      timer=60)
 
     else:
@@ -98,7 +98,7 @@ async def del_admin(_, msg):
 
 
 # 减少白名单
-@bot.on_message(filters.command('revuser', prefixes=prefixes) & admins_on_filter)
+@bot.on_message(filters.command('vip_remove', prefixes=prefixes) & admins_on_filter)
 async def rev_user(_, msg):
     if msg.reply_to_message is None:
         try:
@@ -107,7 +107,7 @@ async def rev_user(_, msg):
         except (IndexError, KeyError, BadRequest):
             await deleteMessage(msg)
             return await msg.reply(
-                '**请先给我一个正确的id！**\n输入格式为：/revuser [tgid]或**命令回复想要取消授权的人**')
+                '**请先给我一个正确的id！**\n输入格式为：/vip_remove [tgid]或**命令回复想要取消授权的人**')
 
     else:
         uid = msg.reply_to_message.from_user.id

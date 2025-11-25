@@ -32,7 +32,27 @@ credits = config.credits_name
 ranks = config.ranks
 prefixes = ['/', '!', '.', '，', '。']
 schedall = config.schedall
-# emby设置
+# emby设置（多服务器）
+from .func_helper.emby_manager import emby_manager
+
+# 初始化所有 Emby 服务器
+LOGGER.info("开始初始化 Emby 服务器...")
+for server_config in config.emby_servers:
+    if not server_config.enabled:
+        LOGGER.warning(f"服务器 {server_config.name} ({server_config.id}) 已禁用，跳过")
+        continue
+
+    success = emby_manager.register_server(server_config)
+    if not success:
+        LOGGER.error(f"注册服务器失败: {server_config.name}")
+
+LOGGER.success(
+    f"Emby 服务器初始化完成，"
+    f"已注册 {emby_manager.get_server_count()} 个服务器: "
+    f"{emby_manager.list_server_ids()}"
+)
+
+# 共享配置（保留向后兼容）
 emby_api = config.emby_api
 emby_url = config.emby_url
 emby_line = config.emby_line
@@ -76,63 +96,66 @@ user_p = [
     BotCommand("srank", "[用户/禁言] 查看计分")]
 
 # 取消 BotCommand("exchange", "[私聊] 使用注册码")
+# 命令重构：新命令在前，旧命令作为别名保留兼容
 admin_p = user_p + [
-    BotCommand("kk", "管理用户 [管理]"),
+    BotCommand("user", "管理用户 [管理]"),
     BotCommand("score", "加/减积分 [管理]"),
     BotCommand("coins", f"加/减{credits} [管理]"),
-    BotCommand("deleted", "清理死号 [管理]"),
-    BotCommand("kick_not_emby", "踢出当前群内无号崽 [管理]"),
+    BotCommand("purge_dead", "清理死号 [管理]"),
+    BotCommand("kick_nonemby", "踢出当前群内无号崽 [管理]"),
     BotCommand("renew", "调整到期时间 [管理]"),
-    BotCommand("rmemby", "删除用户[包括非tg] [管理]"),
-    BotCommand("prouser", "增加白名单 [管理]"),
-    BotCommand("revuser", "减少白名单 [管理]"),
+    BotCommand("user_remove", "删除用户[包括非tg] [管理]"),
+    BotCommand("vip_add", "增加白名单 [管理]"),
+    BotCommand("vip_remove", "减少白名单 [管理]"),
     BotCommand("rev_white_channel", "移除皮套人白名单 [管理]"),
     BotCommand("white_channel", "添加皮套人白名单 [管理]"),
     BotCommand("unban_channel", "解封皮套人 [管理]"),
-    BotCommand("syncgroupm", "消灭不在群的人 [管理]"),
-    BotCommand("syncunbound", "消灭未绑定bot的emby账户 [管理]"),
-    BotCommand("scan_embyname", "扫描同名的用户记录 [管理]"),
-    BotCommand("low_activity", "手动运行活跃检测 [管理]"),
-    BotCommand("check_ex", "手动到期检测 [管理]"),
-    BotCommand("uranks", "召唤观影时长榜，失效时用 [管理]"),
-    BotCommand("days_ranks", "召唤播放次数日榜，失效时用 [管理]"),
-    BotCommand("week_ranks", "召唤播放次数周榜，失效时用 [管理]"),
+    BotCommand("purge_left", "清理不在群的人 [管理]"),
+    BotCommand("purge_orphan", "清理未绑定bot的emby账户 [管理]"),
+    BotCommand("scan_duplicate", "扫描同名的用户记录 [管理]"),
+    BotCommand("check_activity", "手动运行活跃检测 [管理]"),
+    BotCommand("check_expiry", "手动到期检测 [管理]"),
+    BotCommand("ranks_playtime", "召唤观影时长榜 [管理]"),
+    BotCommand("ranks_daily", "召唤播放次数日榜 [管理]"),
+    BotCommand("ranks_weekly", "召唤播放次数周榜 [管理]"),
     BotCommand("sync_favorites", "同步收藏记录 [管理]"),
-    BotCommand("embyadmin", "开启emby控制台权限 [管理]"),
-    BotCommand("ucr", "私聊创建非tg的emby用户 [管理]"),
-    BotCommand("uinfo", "查询指定用户名 [管理]"),
-    BotCommand("urm", "删除指定用户名 [管理]"),
-    BotCommand("userip", "查询指定用户播放过的设备&ip [管理]"),
-    BotCommand("udeviceid", "查询指定设备ID [管理]"),
+    BotCommand("emby_grant_admin", "开启emby控制台权限 [管理]"),
+    BotCommand("user_create", "私聊创建非tg的emby用户 [管理]"),
+    BotCommand("user_info", "查询指定用户名 [管理]"),
+    BotCommand("user_delete", "删除指定用户名 [管理]"),
+    BotCommand("user_ip", "查询指定用户播放过的设备&ip [管理]"),
+    BotCommand("user_device", "查询指定设备ID [管理]"),
     BotCommand("auditip", "根据IP地址审计用户活动 [管理]"),
     BotCommand("auditdevice", "根据设备名审计用户 [管理]"),
     BotCommand("auditclient", "根据客户端名审计用户 [管理]"),
-    BotCommand("renewall", "一键派送天数给所有未封禁的用户 [管理]"),
-    BotCommand("coinsall", "一键派送币币给指定等级的用户 [管理]"),
-    BotCommand("coinsclear", "一键清除所有用户的币币 [管理]"),
-    BotCommand("callall", "群发消息给每个人 [管理]"),
-    BotCommand("only_rm_emby", "删除指定的Emby账号 [管理]"),
-    BotCommand("only_rm_record", "删除指定的tgid数据库记录 [管理]"),
+    BotCommand("renew_all", "一键派送天数给所有未封禁的用户 [管理]"),
+    BotCommand("coins_all", "一键派送币币给指定等级的用户 [管理]"),
+    BotCommand("coins_clear", "一键清除所有用户的币币 [管理]"),
+    BotCommand("broadcast", "群发消息给每个人 [管理]"),
+    BotCommand("del_emby", "删除指定的Emby账号 [管理]"),
+    BotCommand("del_record", "删除指定的tgid数据库记录 [管理]"),
     BotCommand("restart", "重启bot [管理]"),
     BotCommand("update_bot", "更新bot [管理]"),
+    BotCommand("servers", "查看服务器列表 [管理]"),
+    BotCommand("servercheck", "手动健康检查 [管理]"),
 ]
 
 owner_p = admin_p + [
-    BotCommand("proadmin", "添加bot管理 [owner]"),
-    BotCommand("revadmin", "移除bot管理 [owner]"),
-    BotCommand("bindall_id", "一键更新用户们Embyid [owner]"),
+    BotCommand("admin_add", "添加bot管理 [owner]"),
+    BotCommand("admin_remove", "移除bot管理 [owner]"),
+    BotCommand("sync_ids", "一键更新用户们Embyid [owner]"),
     BotCommand("backup_db", "手动备份数据库[owner]"),
-    BotCommand("unbanall", "解除所有用户的禁用状态 [owner]"),
-    BotCommand("banall", "禁用所有用户 [owner]"),
-    BotCommand("paolu", "跑路!!!删除所有用户 [owner]"),
+    BotCommand("unban_all", "解除所有用户的禁用状态 [owner]"),
+    BotCommand("ban_all", "禁用所有用户 [owner]"),
+    BotCommand("nuke", "跑路!!!删除所有用户 [owner]"),
     BotCommand('restore_from_db', '恢复Emby账户[owner]'),
     BotCommand("config", "开启bot高级控制面板 [owner]"),
-    BotCommand("embylibs_unblockall", "一键开启所有用户的媒体库 [owner]"),
-    BotCommand("embylibs_blockall", "一键关闭所有用户的媒体库 [owner]")
+    BotCommand("lib_show_all", "一键开启所有用户的媒体库 [owner]"),
+    BotCommand("lib_hide_all", "一键关闭所有用户的媒体库 [owner]")
 ]
 if len(extra_emby_libs) > 0:
-    owner_p += [BotCommand("extraembylibs_blockall", "一键关闭所有用户的额外媒体库 [owner]"),
-                BotCommand("extraembylibs_unblockall", "一键开启所有用户的额外媒体库 [owner]")]
+    owner_p += [BotCommand("lib_extra_hide", "一键关闭所有用户的额外媒体库 [owner]"),
+                BotCommand("lib_extra_show", "一键开启所有用户的额外媒体库 [owner]")]
 
 with contextlib.suppress(ImportError):
     import uvloop

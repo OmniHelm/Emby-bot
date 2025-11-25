@@ -8,7 +8,8 @@ from PIL import Image
 from PIL import ImageFont
 from PIL import ImageDraw
 from datetime import datetime
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 import numpy as np
 
 """
@@ -68,18 +69,45 @@ class RanksDraw:
             # 榜单项数据
             user_id, item_id, item_type, name, count, duarion = tuple(i)
             # 封面图像获取
+            # 多服务器适配：遍历所有服务器尝试获取海报
+            all_servers = emby_manager.get_all_servers()
+            prisuccess = False
+            data = None
+
             if self.backdrop:
                 resize = (242, 160)
                 xy = (103 + 302 * index, 140)
-                prisuccess, data = await emby.backdrop(item_id=item_id)
+                # 尝试获取backdrop
+                for server_id, emby_service in all_servers.items():
+                    try:
+                        prisuccess, data = await emby_service.backdrop(item_id=item_id)
+                        if prisuccess:
+                            break
+                    except Exception:
+                        pass
+
                 if not prisuccess:
-                    prisuccess, data = await emby.primary(item_id=item_id)
-                    resize = (110, 160)
-                    xy = (169 + 302 * index, 140)
+                    # 尝试获取primary
+                    for server_id, emby_service in all_servers.items():
+                        try:
+                            prisuccess, data = await emby_service.primary(item_id=item_id)
+                            if prisuccess:
+                                resize = (110, 160)
+                                xy = (169 + 302 * index, 140)
+                                break
+                        except Exception:
+                            pass
             else:
-                prisuccess, data = await emby.primary(item_id=item_id)
                 resize = (144, 210)
                 xy = (601, 162 + 230 * index)
+                # 尝试获取primary
+                for server_id, emby_service in all_servers.items():
+                    try:
+                        prisuccess, data = await emby_service.primary(item_id=item_id)
+                        if prisuccess:
+                            break
+                    except Exception:
+                        pass
             if not prisuccess:
                 logging.error(f'【ranks_draw】获取封面图失败 {item_id} {name}')
             # 名称显示偏移
@@ -114,31 +142,75 @@ class RanksDraw:
         for i in tvshows[:5]:
             # 榜单项数据
             user_id, item_id, item_type, name, count, duarion = tuple(i)
-            # 图片获取，剧集主封面获取
+
+            # 多服务器适配：遍历所有服务器获取剧集信息
+            all_servers = emby_manager.get_all_servers()
+            success = False
+            series_id = item_id
+
             # 获取剧ID
-            success, data = await emby.items(emby_id=user_id, item_id=item_id)
-            if success:
-                item_id = data["SeriesId"]
-            else:
+            for server_id, emby_service in all_servers.items():
+                try:
+                    success, data = await emby_service.items(emby_id=user_id, item_id=item_id)
+                    if success and "SeriesId" in data:
+                        series_id = data["SeriesId"]
+                        break
+                except Exception:
+                    pass
+
+            if not success:
                 logging.error(f'【ranks_draw】获取剧集ID失败 {item_id} {name},根据名称开始搜索。')
                 # ID错误时根据剧名搜索得到正确的ID
-                ret_media = await emby.get_movies(title=name, start=0, limit=1)
-                if ret_media:
-                    item_id = ret_media[0]['item_id']
-                    logging.info(f'{name} 已更新使用正确ID：{item_id}')
+                for server_id, emby_service in all_servers.items():
+                    try:
+                        ret_media = await emby_service.get_movies(title=name, start=0, limit=1)
+                        if ret_media:
+                            series_id = ret_media[0]['item_id']
+                            logging.info(f'{name} 已更新使用正确ID：{series_id}')
+                            break
+                    except Exception:
+                        pass
+
+            item_id = series_id
+
             # 封面图像获取
+            prisuccess = False
+            data = None
+
             if self.backdrop:
-                prisuccess, data = await emby.backdrop(item_id=item_id)
                 resize = (242, 160)
                 xy = (408 + 302 * index, 444)
+                # 尝试获取backdrop
+                for server_id, emby_service in all_servers.items():
+                    try:
+                        prisuccess, data = await emby_service.backdrop(item_id=item_id)
+                        if prisuccess:
+                            break
+                    except Exception:
+                        pass
+
                 if not prisuccess:
-                    prisuccess, data = await emby.primary(item_id=item_id)
-                    resize = (110, 160)
-                    xy = (474 + 302 * index, 444)
+                    # 尝试获取primary
+                    for server_id, emby_service in all_servers.items():
+                        try:
+                            prisuccess, data = await emby_service.primary(item_id=item_id)
+                            if prisuccess:
+                                resize = (110, 160)
+                                xy = (474 + 302 * index, 444)
+                                break
+                        except Exception:
+                            pass
             else:
-                prisuccess, data = await emby.primary(item_id=item_id)
                 resize = (144, 210)
                 xy = (770, 985 - 232 * index)
+                # 尝试获取primary
+                for server_id, emby_service in all_servers.items():
+                    try:
+                        prisuccess, data = await emby_service.primary(item_id=item_id)
+                        if prisuccess:
+                            break
+                    except Exception:
+                        pass
             if not prisuccess:
                 logging.error(f'【ranks_draw】获取剧集ID失败 {item_id} {name}')
             temp_font = self.font

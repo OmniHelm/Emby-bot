@@ -4,7 +4,8 @@ from pyrogram import filters
 from pyrogram.errors import BadRequest
 
 from bot import bot, prefixes, LOGGER
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service, get_user_primary_server_id, get_user_emby_services
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.filters import admins_on_filter
 from bot.func_helper.msg_utils import deleteMessage, sendMessage
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby
@@ -42,6 +43,7 @@ async def get_user_input(msg):
 
 @bot.on_message(filters.command('renew', prefixes) & admins_on_filter)
 async def renew_user(_, msg):
+    """续期用户（多服务器版本）"""
     days, e, stats, gm_name = await get_user_input(msg)
     if not e:
         return await sendMessage(msg,
@@ -49,26 +51,52 @@ async def renew_user(_, msg):
                                  timer=60)
     reply = await msg.reply(f"🍓 正在处理ing···/·")
     try:
-        name = f'[{e.name}]({e.tg})' if e.tg else e.name
+        name = f'[{e.name}]({e.tg})' if hasattr(e, 'tg') and e.tg else e.name
     except Exception as ex:
         LOGGER.warning(f"解析用户名称失败: {ex}")
         name = e.name
+
+    # 获取用户对应的服务器实例
+    # emby2 表有 server_id 字段，emby 表需要从 bindings 表获取
+    if stats:  # emby2 表
+        server_id = e.server_id if hasattr(e, 'server_id') else 'main'
+    else:  # emby 表
+        server_id = get_user_primary_server_id(e.tg) or 'main'
+
+    emby_service = emby_manager.get_server(server_id)
+    if not emby_service:
+        return await reply.edit(f"❌ 无法连接到服务器 {server_id}")
+
     # 时间是 utc 来算的
     Now = datetime.now()
     ex_new = Now + timedelta(days=days) if Now > e.ex else e.ex + timedelta(days=days)
     lv = e.lv
-    # 无脑 允许播放
-    if ex_new > Now:
-        lv = 'a' if e.lv == 'a' else 'b'
-        await emby.emby_change_policy(emby_id=e.embyid, disable=False)
-
-    # 没有白名单就寄
-    elif ex_new < Now:
-        if e.lv == 'a':
-            pass
-        else:
+    # 无脑 允许播放/或禁用（对多服务器用户应用到所有绑定服务器）
+    if stats == 1:
+        # emby2：只针对其所在的 server_id
+        if ex_new > Now:
+            lv = 'a' if e.lv == 'a' else 'b'
+            await emby_service.emby_change_policy(emby_id=e.embyid, disable=False)
+        elif ex_new < Now and e.lv != 'a':
             lv = 'c'
-            await emby.emby_change_policy(emby_id=e.embyid, disable=True)
+            await emby_service.emby_change_policy(emby_id=e.embyid, disable=True)
+    else:
+        # emby：遍历所有绑定服务器
+        services = get_user_emby_services(e.tg)
+        if ex_new > Now:
+            lv = 'a' if e.lv == 'a' else 'b'
+            for svc, server_cfg, bind_eid in services:
+                try:
+                    await svc.emby_change_policy(emby_id=bind_eid, disable=False)
+                except Exception as ex:
+                    LOGGER.warning(f"续期启用失败 server={server_cfg.id} embyid={bind_eid}: {ex}")
+        elif ex_new < Now and e.lv != 'a':
+            lv = 'c'
+            for svc, server_cfg, bind_eid in services:
+                try:
+                    await svc.emby_change_policy(emby_id=bind_eid, disable=True)
+                except Exception as ex:
+                    LOGGER.warning(f"续期禁用失败 server={server_cfg.id} embyid={bind_eid}: {ex}")
 
     if stats == 1:
         expired = 1 if lv == 'c' else 0
@@ -80,9 +108,10 @@ async def renew_user(_, msg):
         f'🍒 __ {gm_name} 已调整 emby 用户 {name} 到期时间 {days} 天 (以当前时间计)__'
         f'\n📅 实时到期：{ex_new.strftime("%Y-%m-%d %H:%M:%S")}')
     try:
-        await i.forward(e.tg)
+        if hasattr(e, 'tg') and e.tg:
+            await i.forward(e.tg)
     except Exception as ex:
-        LOGGER.warning(f"转发续期通知失败 tg={e.tg}: {ex}")
+        LOGGER.warning(f"转发续期通知失败: {ex}")
 
     LOGGER.info(
         f"【admin】[renew]：{gm_name} 对 emby账户 {name} 调节 {days} 天，"

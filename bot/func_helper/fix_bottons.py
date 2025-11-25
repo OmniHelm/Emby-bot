@@ -5,7 +5,8 @@ from pyromod.helpers import ikb, array_chunk
 from bot import chanel, main_group, bot_name, extra_emby_libs, tz_id, tz_ad, tz_api, _open, credits, \
     schedall, auto_update, fuxx_pitao, moviepilot, red_envelope, config, LOGGER
 from bot.func_helper import nezha_res
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.utils import members_info, _async_ttl_cache
 
 # 导入 Emoji 规范
@@ -420,17 +421,23 @@ async def cr_kk_ikb(uid, first):
             ban = "🌟 解除禁用" if lv == "**已禁用**" else '💢 禁用账户'
             keyboard = [[ban, f'user_ban-{uid}'], ['⚠️ 删除账户', f'closeemby-{uid}']]
             if len(extra_emby_libs) > 0:
-                success, rep = await emby.user(emby_id=embyid)
+                # 多服务器适配：获取用户对应的服务实例
+                emby_service, server_config, user = get_user_emby_service(uid)
+                if emby_service:
+                    success, rep = await emby_service.user(emby_id=embyid)
+                else:
+                    success = False
+
                 if success:
                     try:
                         # 新版本API：使用EnabledFolders控制访问
                         policy = rep.get("Policy", {})
                         current_enabled_folders = policy.get("EnabledFolders", [])
                         enable_all_folders = policy.get("EnableAllFolders", False)
-                        
+
                         # 获取额外媒体库对应的文件夹ID
-                        extra_folder_ids = await emby.get_folder_ids_by_names(extra_emby_libs)
-                        
+                        extra_folder_ids = await emby_service.get_folder_ids_by_names(extra_emby_libs)
+
                         # 判断额外媒体库是否显示
                         if enable_all_folders is True:
                             # 如果启用所有文件夹，额外媒体库是显示的,显示关闭按钮
@@ -452,11 +459,16 @@ async def cr_kk_ikb(uid, first):
                         LOGGER.error(f"获取额外媒体库状态失败: {str(e)}")
                         keyboard.append([f'关闭额外媒体库', f'embyextralib_block-{uid}'])
             try:
-                rst = await emby.emby_cust_commit(emby_id=embyid, days=30)
-                last_time = rst[0][0]
-                toltime = rst[0][1]
-                text1 = f"**· 🔋 上次活动** | {last_time.split('.')[0]}\n" \
-                        f"**· 📅 过去30天** | {toltime} 分钟"
+                # 多服务器适配：获取用户对应的服务实例
+                emby_service, server_config, user = get_user_emby_service(uid)
+                if emby_service:
+                    rst = await emby_service.emby_cust_commit(emby_id=embyid, days=30)
+                    last_time = rst[0][0]
+                    toltime = rst[0][1]
+                    text1 = f"**· 🔋 上次活动** | {last_time.split('.')[0]}\n" \
+                            f"**· 📅 过去30天** | {toltime} 分钟"
+                else:
+                    text1 = f"**· 📅 过去30天未有记录（无法连接服务器）**"
             except (TypeError, IndexError, ValueError):
                 text1 = f"**· 📅 过去30天未有记录**"
         else:

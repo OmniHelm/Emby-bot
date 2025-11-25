@@ -8,7 +8,8 @@ Date:2024/8/27
 from fastapi import APIRouter
 from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby
 from bot import LOGGER, group, bot
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 
 route = APIRouter()
 
@@ -23,8 +24,19 @@ async def ban_playlist(eid: str):
 
     user = sql_get_emby(eid)
     if user is None:
+        # 多服务器适配：遍历所有服务器尝试封禁（用户不在数据库中）
+        all_servers = emby_manager.get_all_servers()
+        banned = False
+        for server_id, emby_service in all_servers.items():
+            try:
+                if await emby_service.emby_change_policy(emby_id=eid, disable=True):
+                    banned = True
+                    break
+            except Exception as e:
+                LOGGER.warning(f"服务器 {server_id} 封禁失败: {e}")
+
         details = ''
-        if await emby.emby_change_policy(emby_id=eid, disable=True):
+        if banned:
             details += "已拦截到疑似敏感操作播放列表，未在emby数据库中找到此数据，但已斩杀该用户（封禁）"
         else:
             details += "已拦截到疑似敏感操作播放列表，未在emby数据库中找到此数据，未能斩杀该用户（封禁）。详细时间见log记录，请手动斩杀。"
@@ -35,7 +47,20 @@ async def ban_playlist(eid: str):
         LOGGER.info(text)
         return info
 
-    if await emby.emby_change_policy(emby_id=eid, disable=True):
+    # 多服务器适配：获取用户对应的服务实例
+    emby_service, server_config, user_obj = get_user_emby_service(user.tg)
+    if not emby_service:
+        info = {"user_id": user.tg, "emby_name": user.name, "embyid": eid, "is_baned": False,
+                "details": "已拦截疑似敏感操作播放列表，但无法连接到用户所在服务器。"}
+        text = ("【新建播放列表拦截】\n\n"
+                f"[你](tg://user?id={user.tg}) 已被检测到疑似敏感操作\n"
+                f"Emby：{user.name}  |  ID：`{user.tg}`\n"
+                f'详情：{info["details"]}')
+        await bot.send_message(chat_id=group[0], text=text)
+        LOGGER.warning(text)
+        return info
+
+    if await emby_service.emby_change_policy(emby_id=eid, disable=True):
         info = {"user_id": user.tg, "emby_name": user.name, "embyid": eid, "is_baned": True,
                 "details": "已拦截疑似敏感操作播放列表，用户已被斩杀（封禁）。请向权限管理员描述信息。"}
         text = (f"【新建播放列表拦截】\n\n"

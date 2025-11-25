@@ -11,7 +11,7 @@ from bot import bot, ranks, bot_photo, bot_name, LOGGER
 from bot.func_helper.filters import user_in_group_on_filter
 from pyrogram.types import (InlineQueryResultArticle, InputTextMessageContent,
                             InlineKeyboardMarkup, InlineKeyboardButton, InlineQuery, ChosenInlineResult)
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
 from bot.sql_helper.sql_emby import sql_get_emby
 from pyrogram.errors import BadRequest
 from bot.func_helper.msg_utils import callAnswer
@@ -51,7 +51,16 @@ async def find_sth_media(_, inline_query: InlineQuery):
             # print(inline_query)
             Name = inline_query.query
             inline_count = 0 if not inline_query.offset else int(inline_query.offset)
-            ret_movies = await emby.get_movies(title=Name, start=inline_count)
+
+            # 多服务器适配：只搜索用户所属服务器（避免收藏跨服务器内容时失败）
+            emby_service, server_config, user = get_user_emby_service(inline_query.from_user.id)
+            ret_movies = []
+            if emby_service:
+                try:
+                    ret_movies = await emby_service.get_movies(title=Name, start=inline_count) or []
+                except Exception as ex:
+                    LOGGER.warning(f"从服务器 {server_config.id if server_config else 'unknown'} 搜索电影失败: {ex}")
+
             if not ret_movies:
                 results = [InlineQueryResultArticle(
                     title=f"{ranks.logo}",
@@ -100,21 +109,32 @@ async def find_sth_media(_, inline_query: InlineQuery):
 async def favorite_item(_, call):
     item_id = call.data.split(':')[1]
     try:
-        e = sql_get_emby(call.from_user.id).embyid
-        success, title = await asyncio.gather(emby.add_favorite_items(emby_id=e, item_id=item_id),
-                                              emby.item_id_name(emby_id=e, item_id=item_id))
+        e = sql_get_emby(call.from_user.id)
+        if not e or not e.embyid:
+            return await callAnswer(call, '🤺 没有账户怎么收藏？', True)
+
+        # 多服务器适配：获取用户对应的服务实例
+        emby_service, server_config, user = get_user_emby_service(call.from_user.id)
+        if not emby_service:
+            return await callAnswer(call, '❌ 无法连接到您所在的服务器', True)
+
+        success, title = await asyncio.gather(
+            emby_service.add_favorite_items(emby_id=e.embyid, item_id=item_id),
+            emby_service.item_id_name(emby_id=e.embyid, item_id=item_id)
+        )
         if success:
-            _url = f"{emby.url}/emby/Items/{item_id}/Images/Primary?maxHeight=400&maxWidth=600&quality=90"
+            _url = f"{emby_service.url}/emby/Items/{item_id}/Images/Primary?maxHeight=400&maxWidth=600&quality=90"
             try:
                 await bot.send_photo(chat_id=call.from_user.id, photo=_url, caption=f'**{title} 收藏成功！💘**')
-            except Exception as e:
-                LOGGER.warning(f"收藏成功但发送图片失败，改用文本: {e}")
+            except Exception as ex:
+                LOGGER.warning(f"收藏成功但发送图片失败，改用文本: {ex}")
                 await bot.send_message(chat_id=call.from_user.id, text=f'**{title} 收藏成功！💘**')
             await callAnswer(call, f'{title} 收藏成功！💘', True)
         else:
             await callAnswer(call, f'⚠️ 收藏失败！项目 {item_id}', True)
-    except Exception as e:
-        await callAnswer(call, '🤺 没有账户怎么收藏？', True)
+    except Exception as ex:
+        LOGGER.error(f"收藏功能异常: {ex}")
+        await callAnswer(call, '❌ 收藏失败，请稍后重试', True)
 
 # @bot.on_chosen_inline_result(user_in_group_on_filter)
 # async def handle_chosen(_, chosen: ChosenInlineResult):

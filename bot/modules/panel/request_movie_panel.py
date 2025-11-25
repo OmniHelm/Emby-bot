@@ -7,7 +7,8 @@ from bot.sql_helper.sql_emby import sql_get_emby, sql_update_emby, Emby
 from bot.sql_helper.sql_request_record import sql_add_request_record, sql_get_request_record_by_tg
 from bot.func_helper.tmdb_utils import parse_tmdb_link, is_valid_tmdb_link, get_media_type_cn, format_title_slug
 from bot.func_helper.moviepilot import search, add_download_task 
-from bot.func_helper.emby import emby
+from bot.func_helper.emby_utils import get_user_emby_service
+from bot.func_helper.emby_manager import emby_manager
 from bot.func_helper.utils import judge_admins
 import asyncio
 import math
@@ -56,7 +57,19 @@ async def download_media(_, call):
 
     # 先查询emby库中是否存在
     await editMessage(call, '🔍 正在查询Emby库，请稍后...')
-    emby_results = await emby.get_movies(title=txt.text)
+
+    # 多服务器适配：聚合所有服务器的搜索结果
+    all_servers = emby_manager.get_all_servers()
+    emby_results = []
+    if all_servers:
+        for server_id, emby_service in all_servers.items():
+            try:
+                server_results = await emby_service.get_movies(title=txt.text)
+                if server_results:
+                    emby_results.extend(server_results)
+            except Exception as ex:
+                LOGGER.warning(f"从服务器 {server_id} 搜索电影失败: {ex}")
+
     if emby_results:
         text = "🎯 Emby库中已存在以下相关资源:\n\n"
         for item in emby_results:
@@ -431,7 +444,17 @@ async def request_by_link(_, call):
 
     # 查询 Emby 库
     try:
-        emby_results = await emby.get_movies(title=title)
+        # 多服务器适配：聚合所有服务器的搜索结果
+        all_servers = emby_manager.get_all_servers()
+        emby_results = []
+        if all_servers:
+            for server_id, emby_service in all_servers.items():
+                try:
+                    server_results = await emby_service.get_movies(title=title)
+                    if server_results:
+                        emby_results.extend(server_results)
+                except Exception as ex:
+                    LOGGER.warning(f"从服务器 {server_id} 搜索电影失败: {ex}")
 
         if emby_results:
             # Emby 库中已存在
